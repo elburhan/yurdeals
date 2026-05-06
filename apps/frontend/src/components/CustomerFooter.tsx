@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 const footerLinks = [
   { to: '/', label: 'About' },
   { to: '/#how-preordering-works', label: 'How It Works' },
+  { to: '/blog', label: 'Blog & Guides' },
   { to: '/orders', label: 'Track Order' },
   { to: 'mailto:support@yurdeals.com', label: 'Contact' },
 ] as const;

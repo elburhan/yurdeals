@@ -3,7 +3,7 @@
 // ============================================
 
 import { Router, Request, Response, NextFunction } from 'express';
-import multer from 'multer';
+import multer, { FileFilterCallback } from 'multer';
 import {
   adminRateLimiter,
   requireAuth,
@@ -51,7 +51,7 @@ const productImageUpload = multer({
   limits: {
     fileSize: 5 * 1024 * 1024,
   },
-  fileFilter: (_req, file, callback) => {
+  fileFilter: (_req: Express.Request, file: Express.Multer.File, callback: FileFilterCallback) => {
     if (!file.mimetype.startsWith('image/')) {
       callback(new AppError('Only image files are allowed', 422, 'INVALID_UPLOAD_FILE'));
       return;
@@ -66,7 +66,7 @@ router.use(requireAuth, requireRole(['ADMIN']), adminRateLimiter);
 router.post(
   '/uploads/product-image',
   productImageUpload.single('image'),
-  async (req: Request, res: Response, next: NextFunction) => {
+  async (req: Request & { file?: Express.Multer.File }, res: Response, next: NextFunction) => {
     try {
       if (!req.file) {
         throw new AppError('Product image file is required', 422, 'PRODUCT_IMAGE_REQUIRED');

@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import type {
   CategorySummary,
+  HomeCatalogData,
   ProductListItem,
   ProductCatalogFilters,
   PaginationMeta,
 } from '@yurdeals/shared';
-import { getCategories, getProducts } from '../lib/catalogApi';
-import { CategoryChip } from '../components/CategoryChip';
+import { getCategories, getHomeCatalog, getProducts } from '../lib/catalogApi';
 import { CustomerNav } from '../components/CustomerNav';
 import { EmptyState } from '../components/EmptyState';
 import { ProductCard } from '../components/ProductCard';
@@ -17,10 +17,21 @@ export default function CategoryPage() {
   const { categoryId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const [products, setProducts] = useState<ProductListItem[]>([]);
+  const [fallbackProducts, setFallbackProducts] = useState<ProductListItem[]>([]);
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [meta, setMeta] = useState<PaginationMeta | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isFallbackLoading, setIsFallbackLoading] = useState(false);
   const [error, setError] = useState('');
+  const isAllProductsPage = categoryId === 'all' || !categoryId;
+  const selectedCategory = categories.find((category) => category.id === categoryId);
+  const pageTitle = isAllProductsPage
+    ? 'All Products - Preorder from China to Nigeria'
+    : `${selectedCategory?.name ?? 'Products'} - Preorder from China to Nigeria`;
+  const displayedProducts =
+    isAllProductsPage && products.length === 0 ? fallbackProducts : products;
+  const shouldShowSkeletons =
+    isLoading || (isAllProductsPage && isFallbackLoading && displayedProducts.length === 0);
 
   const filters = useMemo<ProductCatalogFilters>(() => {
     const page = Number(searchParams.get('page') ?? '1');
@@ -30,13 +41,17 @@ export default function CategoryPage() {
 
     return {
       page: Number.isNaN(page) ? 1 : page,
-      limit: 12,
+      limit: categoryId === 'all' ? 24 : 12,
       category_id: categoryId === 'all' ? undefined : categoryId,
       search,
       preorder,
       sort: sort ?? 'newest',
     };
   }, [categoryId, searchParams]);
+
+  useEffect(() => {
+    document.title = pageTitle;
+  }, [pageTitle]);
 
   useEffect(() => {
     let isMounted = true;
@@ -65,6 +80,42 @@ export default function CategoryPage() {
       isMounted = false;
     };
   }, [filters]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    if (!isAllProductsPage) {
+      setFallbackProducts([]);
+      return;
+    }
+
+    setIsFallbackLoading(true);
+    getHomeCatalog()
+      .then((response) => {
+        if (isMounted) {
+          setFallbackProducts(
+            getUniqueProducts([
+              ...response.data.preorderProducts,
+              ...response.data.featuredProducts,
+            ]).slice(0, 24),
+          );
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setFallbackProducts([]);
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsFallbackLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isAllProductsPage]);
 
   useEffect(() => {
     let isMounted = true;
@@ -103,8 +154,16 @@ export default function CategoryPage() {
 
       <section className="container-app py-6">
         <div className="mb-5 space-y-3">
-          <p className="text-sm text-surface-500">Public catalog</p>
-          <h1 className="font-display text-3xl font-bold leading-tight text-surface-950">Products</h1>
+          <p className="text-sm font-bold uppercase tracking-wide text-primary-700">
+            China to Nigeria catalog
+          </p>
+          <h1 className="font-display text-3xl font-bold leading-tight text-surface-950">
+            {isAllProductsPage ? 'All Products' : selectedCategory?.name ?? 'Products'}
+          </h1>
+          <p className="max-w-2xl text-sm leading-6 text-surface-500">
+            Browse preorder and local product picks with clear pricing, Paystack checkout, and
+            WhatsApp support.
+          </p>
           <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
             <input
               type="search"
@@ -141,12 +200,41 @@ export default function CategoryPage() {
         <div className="mb-6 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2">
           <Link
             to="/categories/all"
-            className="inline-flex min-h-11 shrink-0 snap-center items-center rounded-full border border-primary-200 bg-primary-50 px-4 py-2 text-sm font-semibold text-primary-700"
+            className={`inline-flex min-h-11 shrink-0 snap-center items-center rounded-full border px-4 py-2 text-sm font-semibold shadow-sm ${
+              isAllProductsPage
+                ? 'border-primary-500 bg-primary-500 text-white'
+                : 'border-primary-200 bg-primary-50 text-primary-700 hover:bg-primary-100'
+            }`}
           >
             All
           </Link>
           {categories.map((category) => (
-            <CategoryChip key={category.id} category={category} />
+            <Link
+              key={category.id}
+              to={`/categories/${category.id}`}
+              className={`inline-flex min-h-11 shrink-0 snap-center items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium shadow-sm transition-colors ${
+                category.id === categoryId
+                  ? 'border-primary-500 bg-primary-500 text-white'
+                  : 'border-surface-200 bg-white text-surface-800 hover:border-primary-300 hover:text-primary-700'
+              }`}
+            >
+              {category.image ? (
+                <img
+                  src={category.image}
+                  alt=""
+                  className="h-7 w-7 rounded-full object-cover"
+                  loading="lazy"
+                />
+              ) : (
+                <span
+                  className={`h-2.5 w-2.5 rounded-full ${
+                    category.id === categoryId ? 'bg-white' : 'bg-primary-500'
+                  }`}
+                  aria-hidden="true"
+                />
+              )}
+              <span>{category.name}</span>
+            </Link>
           ))}
         </div>
 
@@ -160,14 +248,16 @@ export default function CategoryPage() {
         )}
 
         <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4">
-          {isLoading
-            ? Array.from({ length: 8 }).map((_, index) => (
+          {shouldShowSkeletons
+            ? Array.from({ length: 12 }).map((_, index) => (
                 <ProductCardSkeleton key={index} />
               ))
-            : products.map((product) => <ProductCard key={product.id} product={product} />)}
+            : displayedProducts.map((product) => (
+                <ProductCard key={product.id} product={product} />
+              ))}
         </div>
 
-        {!isLoading && products.length === 0 && (
+        {!isLoading && !isAllProductsPage && products.length === 0 && (
           <EmptyState
             title="No products found"
             message="Try another keyword or browse all categories for preorder deals."
@@ -188,6 +278,17 @@ export default function CategoryPage() {
       </section>
     </main>
   );
+}
+
+function getUniqueProducts(products: HomeCatalogData['featuredProducts']): ProductListItem[] {
+  const seen = new Set<string>();
+  return products.filter((product) => {
+    if (seen.has(product.id)) {
+      return false;
+    }
+    seen.add(product.id);
+    return true;
+  });
 }
 
 interface PaginationButtonProps {

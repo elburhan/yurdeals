@@ -183,8 +183,14 @@ export default function ProductDetailPage() {
                     {preorderPrice}
                   </p>
                   <p className="mt-3 inline-flex rounded-full bg-primary-50 px-3 py-1.5 text-sm font-bold text-primary-700 ring-1 ring-primary-100">
-                    Free shipping on orders above ₦500,000
+                    Free shipping on orders above NGN 500,000
                   </p>
+                  <Link
+                    to="/blog/how-preordering-from-china-to-nigeria-works-step-by-step"
+                    className="mt-3 inline-flex min-h-10 items-center rounded-full border border-primary-200 bg-white px-4 text-sm font-bold text-primary-700 hover:bg-primary-50"
+                  >
+                    Not sure how preordering works? Read our complete guide
+                  </Link>
                 </div>
 
                 <div className="rounded-full bg-white px-4 py-3 text-sm font-bold text-emerald-700 shadow-sm">

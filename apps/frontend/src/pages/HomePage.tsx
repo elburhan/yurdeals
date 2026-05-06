@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { HomeCatalogData } from '@yurdeals/shared';
 import { getHomeCatalog } from '../lib/catalogApi';
+import { BlogList } from '../components/BlogList';
 import { CategoryChip } from '../components/CategoryChip';
 import { CustomerNav } from '../components/CustomerNav';
 import { ProductCard } from '../components/ProductCard';
@@ -10,6 +11,7 @@ import { SocialProof } from '../components/SocialProof';
 import { TrustBanner } from '../components/TrustBanner';
 import { HERO_BACKGROUND_IMAGES } from '../config/heroBackgrounds';
 import { businessIdeas, type BusinessIdea } from '../data/businessIdeas';
+import { blogPosts } from '../data/blogPosts';
 
 const SHOW_BLOG = false;
 
@@ -115,22 +117,18 @@ export default function HomePage() {
           className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-white/10 to-transparent opacity-60"
           aria-hidden="true"
         />
-        <div
-          className="absolute -right-24 top-12 hidden h-72 w-72 rounded-[3rem] border border-white/10 bg-white/10 shadow-2xl backdrop-blur md:block"
-          aria-hidden="true"
-        />
-        <div className="container-app relative z-10 grid gap-8 py-10 md:grid-cols-[1.1fr_0.9fr] md:items-center md:py-14">
-          <div className="space-y-5">
+        <div className="container-app relative z-10 py-3 sm:py-5 md:py-8">
+          <div className="max-w-3xl space-y-2 sm:space-y-3.5">
             <p className="text-sm font-semibold uppercase tracking-wide text-primary-300">
               China to Nigeria marketplace
             </p>
-            <h1 className="max-w-2xl font-display text-3xl font-bold leading-tight sm:text-5xl">
+            <h1 className="max-w-2xl font-display text-[1.9rem] font-bold leading-[1.08] sm:text-5xl">
               Get Premium Products from China at Factory Prices - Delivered to Nigeria
             </h1>
-            <p className="max-w-xl text-base leading-7 text-surface-200 sm:text-lg">
+            <p className="max-w-xl text-sm leading-5.5 text-surface-200 sm:text-lg sm:leading-7">
               Preorder smart. Save up to 40%. We inspect every order in China.
             </p>
-            <div className="flex flex-wrap gap-2">
+            <div className="hidden flex-wrap gap-2 sm:flex">
               {heroValueBadges.map((badge) => (
                 <span
                   key={badge.label}
@@ -141,72 +139,36 @@ export default function HomePage() {
                 </span>
               ))}
             </div>
-            <p className="inline-flex rounded-full border border-primary-300/40 bg-primary-500/15 px-4 py-2 text-sm font-bold leading-6 text-primary-100">
+            <p className="inline-flex max-w-[23rem] rounded-full border border-primary-300/40 bg-primary-500/15 px-3 py-1 text-[11px] font-bold leading-4.5 text-primary-100 sm:max-w-none sm:px-4 sm:py-2 sm:text-sm sm:leading-6">
               Limited preorder slots at factory prices - prices may rise after arrival in Nigeria.
             </p>
-            <div className="grid gap-3 sm:flex sm:flex-wrap">
+            <div className="grid gap-2 sm:flex sm:flex-wrap sm:gap-3">
               <Link
                 to="/categories/all"
-                className="inline-flex min-h-[52px] w-full items-center justify-center rounded-full bg-primary-500 px-6 py-3 text-base font-semibold text-white shadow-lg shadow-primary-950/20 transition hover:-translate-y-0.5 hover:bg-primary-400 active:translate-y-0 sm:w-auto"
+                className="inline-flex min-h-11 w-full items-center justify-center rounded-full bg-primary-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-primary-950/20 transition hover:-translate-y-0.5 hover:bg-primary-400 active:translate-y-0 sm:min-h-[52px] sm:w-auto sm:text-base"
               >
-                Start Preordering Now
+                Browse All Products
               </Link>
               <a
                 href="#how-preordering-works"
-                className="inline-flex min-h-[52px] w-full items-center justify-center rounded-full border border-white/40 bg-white/10 px-6 py-3 text-base font-semibold text-white hover:bg-white/20 sm:w-auto"
+                className="inline-flex min-h-10 w-full items-center justify-center rounded-full border border-white/40 bg-white/10 px-5 py-2 text-sm font-semibold text-white hover:bg-white/20 sm:min-h-[52px] sm:w-auto sm:px-6 sm:py-3 sm:text-base"
               >
                 How Preordering Works
               </a>
             </div>
-            <div className="flex flex-wrap items-center gap-2 text-sm text-surface-200">
+            <div className="hidden flex-wrap items-center gap-2 text-sm text-surface-200 sm:flex">
               <span className="rounded-full bg-white px-3 py-1 font-bold text-primary-700">
                 Paystack
               </span>
               <span>Secure online payments via Paystack. Over 100 happy customers.</span>
             </div>
           </div>
-          <div className="relative overflow-hidden rounded-2xl border border-white/20 bg-gradient-to-br from-white via-primary-50 to-accent-100 p-5 text-surface-950 shadow-xl sm:p-6">
-            <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-primary-200/70" aria-hidden="true" />
-            <div>
-              <h3 className="mb-4 font-display text-2xl font-bold text-surface-950">
-                Why choose us
-              </h3>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {whyChooseItems.map((item) => (
-                  <article
-                    key={item.title}
-                    className="flex gap-3 rounded-2xl border border-primary-100 bg-white/85 p-3 shadow-sm backdrop-blur"
-                  >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-50 text-primary-700 ring-1 ring-primary-100">
-                      <WhyChooseIcon name={item.icon} />
-                    </span>
-                    <div>
-                      <h4 className="font-semibold text-surface-950">{item.title}</h4>
-                      <p className="text-sm leading-6 text-surface-700">{item.description}</p>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </div>
-          </div>
         </div>
       </section>
 
-      <section className="container-app py-8">
-        <div className="mb-6">
-          <TrustBanner variant="delivery" />
-        </div>
-        {error && (
-          <div
-            className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700"
-            role="alert"
-          >
-            {error}
-          </div>
-        )}
-
-        <div className="mb-8">
-          <div className="mb-4 flex items-end justify-between gap-4">
+      <section className="container-app pb-8 pt-1.5 sm:pt-3">
+        <div className="mb-3">
+          <div className="mb-3 flex items-end justify-between gap-4">
             <div>
               <h2 className="font-display text-2xl font-bold text-surface-950">Categories</h2>
               <p className="text-sm text-surface-500">Start with a focused department.</p>
@@ -226,6 +188,22 @@ export default function HomePage() {
           </div>
         </div>
 
+        <TrendingProductsSection
+          products={getUniqueProducts([
+            ...(catalog?.preorderProducts ?? []),
+            ...(catalog?.featuredProducts ?? []),
+          ]).slice(0, 6)}
+          isLoading={isLoading}
+        />
+        {error && (
+          <div
+            className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+            role="alert"
+          >
+            {error}
+          </div>
+        )}
+
         <ProductSection
           title="Preorder picks"
           products={catalog?.preorderProducts ?? []}
@@ -238,18 +216,37 @@ export default function HomePage() {
           isLoading={isLoading}
         />
 
-        <ProductSection
-          title="Trending in Nigeria"
-          subtitle="Recently preordered items Nigerian shoppers are checking out this week."
-          products={getUniqueProducts([
-            ...(catalog?.preorderProducts ?? []),
-            ...(catalog?.featuredProducts ?? []),
-          ]).slice(0, 4)}
-          isLoading={isLoading}
-          productBadge="Trending Now"
-        />
+        <WhyChooseSection />
+
+        <div className="mb-6">
+          <TrustBanner variant="delivery" />
+        </div>
 
         {SHOW_BLOG ? <BusinessIdeasSection ideas={businessIdeas.slice(0, 3)} /> : null}
+
+        <section className="mb-10 rounded-2xl border border-primary-100 bg-white p-5 shadow-sm sm:p-6">
+          <div className="mb-5 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+            <div>
+              <p className="text-sm font-bold uppercase tracking-wide text-primary-700">
+                Guides & insights
+              </p>
+              <h2 className="font-display text-2xl font-extrabold tracking-tight text-surface-950">
+                Learn How It Works
+              </h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-surface-500">
+                Clear answers about preorder timelines, inspection in China, customs, and delivery
+                expectations for Nigeria.
+              </p>
+            </div>
+            <Link
+              to="/blog"
+              className="inline-flex min-h-11 items-center justify-center rounded-full border border-primary-200 px-4 text-sm font-bold text-primary-700 hover:bg-primary-50"
+            >
+              View all guides
+            </Link>
+          </div>
+          <BlogList posts={blogPosts} limit={3} />
+        </section>
 
         <SocialProof
           limit={4}
@@ -360,6 +357,82 @@ interface ProductSectionProps {
   products: HomeCatalogData['featuredProducts'];
   isLoading: boolean;
   productBadge?: string;
+}
+
+function TrendingProductsSection({
+  products,
+  isLoading,
+}: {
+  products: HomeCatalogData['featuredProducts'];
+  isLoading: boolean;
+}) {
+  return (
+    <section className="mb-6 rounded-2xl border border-primary-100 bg-white p-4 shadow-sm sm:p-5">
+      <div className="mb-4">
+        <p className="text-sm font-bold uppercase tracking-wide text-primary-700">
+          Popular this week
+        </p>
+        <h2 className="font-display text-2xl font-extrabold tracking-tight text-surface-950">
+          Trending in Nigeria
+        </h2>
+        <p className="mt-1 text-sm leading-6 text-surface-500">
+          Recently preordered items Nigerian shoppers are checking out right now.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4">
+        {isLoading
+          ? Array.from({ length: 6 }).map((_, index) => <ProductCardSkeleton key={index} />)
+          : products.map((product) => (
+              <ProductCard key={product.id} product={product} badgeLabel="Trending Now" />
+            ))}
+      </div>
+
+      {!isLoading && products.length === 0 && (
+        <p className="mt-4 rounded-2xl border border-dashed border-surface-300 p-5 text-center text-sm text-surface-500">
+          Trending preorder picks will appear here once catalog items are active.
+        </p>
+      )}
+
+      <Link
+        to="/categories/all"
+        className="mt-5 inline-flex min-h-[52px] w-full items-center justify-center rounded-full bg-primary-500 px-6 py-3 text-base font-bold text-white shadow-sm transition hover:bg-primary-600 active:bg-primary-700"
+      >
+        View All Products
+      </Link>
+    </section>
+  );
+}
+
+function WhyChooseSection(): JSX.Element {
+  return (
+    <section className="mb-6 rounded-2xl border border-primary-100 bg-gradient-to-br from-white via-primary-50 to-accent-100 p-4 text-surface-950 shadow-sm sm:p-5">
+      <div className="mb-4">
+        <p className="text-sm font-bold uppercase tracking-wide text-primary-700">
+          Why choose us
+        </p>
+        <h2 className="font-display text-2xl font-extrabold tracking-tight text-surface-950">
+          Safer preorders from China to Nigeria
+        </h2>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {whyChooseItems.map((item) => (
+          <article
+            key={item.title}
+            className="flex gap-3 rounded-2xl border border-primary-100 bg-white/85 p-3 shadow-sm backdrop-blur"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-50 text-primary-700 ring-1 ring-primary-100">
+              <WhyChooseIcon name={item.icon} />
+            </span>
+            <div>
+              <h3 className="font-semibold text-surface-950">{item.title}</h3>
+              <p className="text-sm leading-6 text-surface-700">{item.description}</p>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function ProductSection({ title, subtitle, products, isLoading, productBadge }: ProductSectionProps) {

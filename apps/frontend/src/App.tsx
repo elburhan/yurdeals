@@ -23,6 +23,8 @@ const StaffDashboardPage = lazy(() => import('./pages/StaffDashboardPage'));
 const OrdersPage = lazy(() => import('./pages/OrdersPage'));
 const AccountPage = lazy(() => import('./pages/AccountPage'));
 const BusinessIdeaPage = lazy(() => import('./pages/BusinessIdeaPage'));
+const BlogPage = lazy(() => import('./pages/BlogPage'));
+const BlogPostPage = lazy(() => import('./pages/BlogPostPage'));
 
 function RouteFallback() {
   return (
@@ -46,6 +48,8 @@ function App() {
                 <Route path="/" element={<HomePage />} />
                 <Route path="/categories/:categoryId" element={<CategoryPage />} />
                 <Route path="/ideas/:slug" element={<BusinessIdeaPage />} />
+                <Route path="/blog" element={<BlogPage />} />
+                <Route path="/blog/:slug" element={<BlogPostPage />} />
                 <Route path="/products/:productId" element={<ProductDetailPage />} />
                 <Route path="/cart" element={<CartPage />} />
                 <Route path="/addresses" element={<AddressesPage />} />
