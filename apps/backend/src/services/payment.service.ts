@@ -15,6 +15,8 @@ import { notifyPaymentFailed, notifyPaymentSuccess } from './notification.servic
 import { PaymentGateway, ProviderEvent } from './payment-gateways/paymentGateway.types';
 import { PaystackGateway } from './payment-gateways/paystack.gateway';
 import { handleOrderStatusTransition } from './shipmentEvent.service';
+import { CreateOrderInput } from '../schemas/order.schema';
+import { orderRepository } from '../repositories/order.repository';
 
 const gateways = {
   PAYSTACK: new PaystackGateway(),
@@ -47,9 +49,15 @@ export async function initiatePayment(
   });
 
   await paymentRepository.updatePaymentMetadata(payment.id, {
-    reference,
     authorizationUrl: result.authorizationUrl,
-    provider: payment.provider,
+    accessCode: result.accessCode ?? null,
+    providerRef: result.reference,
+    gatewayResponse: JSON.stringify(result.providerResponse),
+    metadata: {
+      reference,
+      authorizationUrl: result.authorizationUrl,
+      provider: payment.provider,
+    },
   });
 
   logger.info('Payment initiated', {
@@ -62,6 +70,7 @@ export async function initiatePayment(
     payment,
     authorizationUrl: result.authorizationUrl,
     reference: result.reference,
+    accessCode: result.accessCode ?? null,
   };
 }
 
@@ -91,10 +100,16 @@ export async function initiateGuestPayment(
   });
 
   await paymentRepository.updatePaymentMetadata(payment.id, {
-    reference,
     authorizationUrl: result.authorizationUrl,
-    provider: payment.provider,
-    customerType: 'GUEST',
+    accessCode: result.accessCode ?? null,
+    providerRef: result.reference,
+    gatewayResponse: JSON.stringify(result.providerResponse),
+    metadata: {
+      reference,
+      authorizationUrl: result.authorizationUrl,
+      provider: payment.provider,
+      customerType: 'GUEST',
+    },
   });
 
   logger.info('Guest payment initiated', {
@@ -107,6 +122,50 @@ export async function initiateGuestPayment(
     payment,
     authorizationUrl: result.authorizationUrl,
     reference: result.reference,
+    accessCode: result.accessCode ?? null,
+  };
+}
+
+export async function checkoutWithPaystack(
+  userId: string,
+  input: CreateOrderInput,
+): Promise<{ order: import('@yurdeals/shared').OrderSummary; payment: import('@yurdeals/shared').PaymentSummary; authorizationUrl: string; reference: string; accessCode?: string | null; }> {
+  const provider = PaymentProvider.PAYSTACK;
+  const gateway = getGateway(provider);
+  const reference = createPaymentReference(provider);
+  const checkout = await orderRepository.createCheckoutFromCart(userId, input, provider, reference);
+
+  const result = await gateway.initializePayment({
+    amount: checkout.payment.amount,
+    currency: checkout.payment.currency,
+    orderId: checkout.order.id,
+    paymentId: checkout.payment.id,
+    reference,
+    email: 'customerEmail' in checkout.payment && checkout.payment.customerEmail ? checkout.payment.customerEmail : 'payments@yurdeals.com',
+    name: checkout.order.shippingAddress
+      ? `${checkout.order.shippingAddress.firstName} ${checkout.order.shippingAddress.lastName}`
+      : 'YurDeals Customer',
+  });
+
+  const payment = await paymentRepository.updatePaymentMetadata(checkout.payment.id, {
+    authorizationUrl: result.authorizationUrl,
+    accessCode: result.accessCode ?? null,
+    providerRef: result.reference,
+    gatewayResponse: JSON.stringify(result.providerResponse),
+    metadata: {
+      reference,
+      authorizationUrl: result.authorizationUrl,
+      provider,
+      flow: 'CHECKOUT',
+    },
+  });
+
+  return {
+    order: checkout.order,
+    payment,
+    authorizationUrl: result.authorizationUrl,
+    reference: result.reference,
+    accessCode: result.accessCode ?? null,
   };
 }
 

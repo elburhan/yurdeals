@@ -8,6 +8,7 @@ import { CreateGuestOrderInput, CreateOrderInput, OrderQueryInput } from '../sch
 import { AppError } from '../middleware/errorHandler';
 import { AuditContext, writeAuditLog } from './audit.service';
 import { notifyOrderCreated, notifyOrderStatusChanged } from './notification.service';
+import { checkoutWithPaystack } from './payment.service';
 
 export async function listUserOrders(
   userId: string,
@@ -135,5 +136,30 @@ export async function createGuestOrderFromCart(
       customerType: 'GUEST',
     },
   });
+  return data;
+}
+
+export async function checkoutOrder(
+  userId: string,
+  input: CreateOrderInput,
+  auditContext?: AuditContext,
+) {
+  const data = await checkoutWithPaystack(userId, input);
+  await notifyOrderCreated(userId, data.order);
+  await writeAuditLog({
+    ...auditContext,
+    userId,
+    action: 'ORDER_CHECKOUT_CREATED',
+    entity: 'Order',
+    entityId: data.order.id,
+    newData: {
+      orderNumber: data.order.orderNumber,
+      total: data.order.total,
+      currency: data.order.currency,
+      paymentReference: data.reference,
+      paymentProvider: data.payment.provider,
+    },
+  });
+
   return data;
 }

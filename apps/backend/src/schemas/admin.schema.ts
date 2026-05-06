@@ -2,7 +2,7 @@
 // Admin Validation Schemas
 // ============================================
 
-import { OrderStatus, ShipmentStatus, StockType } from '@prisma/client';
+import { OrderStatus, ProductStockType, ShipmentStatus } from '@prisma/client';
 import { z } from 'zod';
 
 const optionalCuid = z.string().cuid('Invalid id').optional();
@@ -36,7 +36,7 @@ export const adminCreateProductSchema = z.object({
   category_id: z.string().cuid('Invalid category id'),
   base_price: z.coerce.number().positive(),
   currency: z.string().trim().length(3).optional().default('NGN'),
-  stock_type: z.nativeEnum(StockType).optional().default(StockType.LOCAL),
+  stock_type: z.nativeEnum(ProductStockType).optional().default(ProductStockType.IN_STOCK),
   sku: z.string().trim().max(80).optional(),
   weight: z.coerce.number().positive().optional(),
   is_featured: z.boolean().optional().default(false),

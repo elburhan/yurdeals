@@ -14,12 +14,14 @@ import {
 import { prisma } from '../config';
 import { AdminOrderQueryInput } from '../schemas/admin.schema';
 import { getPagination } from '../utils/pagination';
-import { GUEST_CUSTOMER_NOTE_TAG, WHATSAPP_CHECKOUT_NOTE_TAG } from './order.repository';
+import { GUEST_CUSTOMER_NOTE_TAG, WHATSAPP_CHECKOUT_NOTE_TAG, mapPayment } from './order.repository';
 
 const ADMIN_ORDER_LIST_SELECT = {
   id: true,
   orderNumber: true,
   status: true,
+  inspectionStatus: true,
+  paymentReference: true,
   total: true,
   currency: true,
   createdAt: true,
@@ -43,6 +45,8 @@ const ADMIN_ORDER_DETAIL_SELECT = {
   id: true,
   orderNumber: true,
   status: true,
+  inspectionStatus: true,
+  paymentReference: true,
   subtotal: true,
   shippingFee: true,
   tax: true,
@@ -50,6 +54,13 @@ const ADMIN_ORDER_DETAIL_SELECT = {
   total: true,
   currency: true,
   createdAt: true,
+  updatedAt: true,
+  paidAt: true,
+  shippedAt: true,
+  deliveredAt: true,
+  trackingNumber: true,
+  trackingCarrier: true,
+  trackingUrl: true,
   user: {
     select: {
       id: true,
@@ -85,6 +96,8 @@ const ADMIN_ORDER_DETAIL_SELECT = {
       price: true,
       quantity: true,
       total: true,
+      stockTypeSnapshot: true,
+      inspectionRequired: true,
     },
     orderBy: { id: 'asc' },
   },
@@ -93,11 +106,22 @@ const ADMIN_ORDER_DETAIL_SELECT = {
       id: true,
       orderId: true,
       provider: true,
-      providerRef: true,
-      amount: true,
-      currency: true,
       status: true,
+      reference: true,
+      providerRef: true,
+      providerTransactionId: true,
+      authorizationUrl: true,
+      accessCode: true,
+      customerEmail: true,
+      amount: true,
+      amountCaptured: true,
+      amountRefunded: true,
+      fees: true,
+      currency: true,
+      channel: true,
+      gatewayResponse: true,
       paidAt: true,
+      verifiedAt: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -160,7 +184,8 @@ export class AdminOrderRepository {
     const [
       totalOrders,
       pendingOrders,
-      confirmedOrders,
+      paidOrders,
+      processingOrders,
       inTransitOrders,
       deliveredOrders,
       totalShipments,
@@ -169,10 +194,13 @@ export class AdminOrderRepository {
       deliveredShipments,
       totalProducts,
       activeProducts,
+      publishedProducts,
+      preorderProducts,
     ] = await prisma.$transaction([
       prisma.order.count(),
       prisma.order.count({ where: { status: OrderStatus.PENDING } }),
-      prisma.order.count({ where: { status: OrderStatus.CONFIRMED } }),
+      prisma.order.count({ where: { status: OrderStatus.PAID } }),
+      prisma.order.count({ where: { status: OrderStatus.PROCESSING } }),
       prisma.order.count({ where: { status: OrderStatus.IN_TRANSIT } }),
       prisma.order.count({ where: { status: OrderStatus.DELIVERED } }),
       prisma.shipment.count(),
@@ -181,13 +209,16 @@ export class AdminOrderRepository {
       prisma.shipment.count({ where: { status: ShipmentStatus.DELIVERED } }),
       prisma.product.count(),
       prisma.product.count({ where: { isActive: true } }),
+      prisma.product.count({ where: { isPublished: true } }),
+      prisma.product.count({ where: { stockType: 'PREORDER' } }),
     ]);
 
     return {
       orders: {
         total: totalOrders,
         pending: pendingOrders,
-        confirmed: confirmedOrders,
+        paid: paidOrders,
+        processing: processingOrders,
         inTransit: inTransitOrders,
         delivered: deliveredOrders,
       },
@@ -200,6 +231,8 @@ export class AdminOrderRepository {
       products: {
         total: totalProducts,
         active: activeProducts,
+        published: publishedProducts,
+        preorder: preorderProducts,
       },
     };
   }
@@ -212,6 +245,7 @@ function buildOrderWhere(query: AdminOrderQueryInput): Prisma.OrderWhereInput {
       ? {
           OR: [
             { orderNumber: { contains: query.search, mode: 'insensitive' } },
+            { paymentReference: { contains: query.search, mode: 'insensitive' } },
             { user: { email: { contains: query.search, mode: 'insensitive' } } },
           ],
         }
@@ -234,11 +268,13 @@ function mapAdminOrderListItem(order: AdminOrderListRecord): AdminOrderListItem 
     checkoutMethod: order.notes?.includes(WHATSAPP_CHECKOUT_NOTE_TAG) ? 'WHATSAPP' : 'ONLINE',
     customerType: order.notes?.includes(GUEST_CUSTOMER_NOTE_TAG) ? 'GUEST' : 'REGISTERED',
     status: order.status,
+    inspectionStatus: order.inspectionStatus,
     total: Number(order.total),
     currency: order.currency,
     customerName: `${order.user.firstName} ${order.user.lastName}`,
     customerEmail: order.user.email,
     itemCount: order.items.reduce((total, item) => total + item.quantity, 0),
+    paymentReference: order.paymentReference,
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),
   };
@@ -251,6 +287,8 @@ function mapAdminOrderDetail(order: AdminOrderDetailRecord): AdminOrderDetailDat
     id: order.id,
     orderNumber: order.orderNumber,
     status: order.status,
+    inspectionStatus: order.inspectionStatus,
+    paymentReference: order.paymentReference,
     subtotal: Number(order.subtotal),
     shippingFee: Number(order.shippingFee),
     tax: Number(order.tax),
@@ -275,15 +313,22 @@ function mapAdminOrderDetail(order: AdminOrderDetailRecord): AdminOrderDetailDat
           updatedAt: order.shippingAddress.updatedAt.toISOString(),
         }
       : null,
+    trackingNumber: order.trackingNumber,
+    trackingCarrier: order.trackingCarrier,
+    trackingUrl: order.trackingUrl,
+    paidAt: order.paidAt?.toISOString() ?? null,
+    shippedAt: order.shippedAt?.toISOString() ?? null,
+    deliveredAt: order.deliveredAt?.toISOString() ?? null,
     items,
     createdAt: order.createdAt.toISOString(),
+    updatedAt: order.updatedAt.toISOString(),
     customer: {
       id: order.user.id,
       name: `${order.user.firstName} ${order.user.lastName}`,
       email: order.user.email,
       phone: order.user.phone,
     },
-    payments: order.payments.map(mapPayment),
+    payments: order.payments.map((payment) => mapPayment(payment) as PaymentSummary),
   };
 }
 
@@ -296,21 +341,8 @@ function mapOrderItem(item: AdminOrderDetailRecord['items'][number]): OrderItemS
     price: Number(item.price),
     quantity: item.quantity,
     total: Number(item.total),
-  };
-}
-
-function mapPayment(payment: AdminOrderDetailRecord['payments'][number]): PaymentSummary {
-  return {
-    id: payment.id,
-    orderId: payment.orderId,
-    provider: payment.provider,
-    providerRef: payment.providerRef,
-    amount: Number(payment.amount),
-    currency: payment.currency,
-    status: payment.status,
-    paidAt: payment.paidAt?.toISOString() ?? null,
-    createdAt: payment.createdAt.toISOString(),
-    updatedAt: payment.updatedAt.toISOString(),
+    stockTypeSnapshot: item.stockTypeSnapshot,
+    inspectionRequired: item.inspectionRequired,
   };
 }
 

@@ -20,6 +20,7 @@ import {
 } from '../schemas/order.schema';
 import {
   cancelUserOrder,
+  checkoutOrder,
   createOrderFromCart,
   createGuestOrderFromCart,
   getUserOrder,
@@ -81,6 +82,28 @@ router.get(
       const query = res.locals.validatedQuery as OrderQueryInput;
       const result = await listUserOrders(req.user.id, query);
       sendSuccess(res, 200, result.data, 'Orders retrieved', getPaginationMeta(query, result.total));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  '/checkout',
+  orderRateLimiter,
+  validateBody(createOrderSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!req.user) {
+        next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
+        return;
+      }
+
+      const data = await checkoutOrder(req.user.id, req.body as CreateOrderInput, {
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      sendSuccess(res, 201, data, 'Checkout initiated successfully');
     } catch (error) {
       next(error);
     }

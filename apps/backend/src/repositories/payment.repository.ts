@@ -7,17 +7,28 @@ import { PaymentSummary } from '@yurdeals/shared';
 import { prisma } from '../config';
 import { AppError } from '../middleware/errorHandler';
 import { ProviderEvent } from '../services/payment-gateways/paymentGateway.types';
-import { createGuestTokenTag } from './order.repository';
+import { createGuestTokenTag, mapPayment } from './order.repository';
 
 const PAYMENT_SELECT = {
   id: true,
   orderId: true,
   provider: true,
-  providerRef: true,
-  amount: true,
-  currency: true,
   status: true,
+  reference: true,
+  providerRef: true,
+  providerTransactionId: true,
+  authorizationUrl: true,
+  accessCode: true,
+  customerEmail: true,
+  amount: true,
+  amountCaptured: true,
+  amountRefunded: true,
+  fees: true,
+  currency: true,
+  channel: true,
+  gatewayResponse: true,
   paidAt: true,
+  verifiedAt: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.PaymentSelect;
@@ -38,12 +49,13 @@ const ORDER_PAYMENT_SELECT = {
     },
   },
   payments: {
-    where: { status: PaymentStatus.SUCCESS },
+    where: {
+      status: { in: [PaymentStatus.SUCCESS, PaymentStatus.AUTHORIZED] },
+    },
     select: { id: true },
   },
 } satisfies Prisma.OrderSelect;
 
-type PaymentRecord = Prisma.PaymentGetPayload<{ select: typeof PAYMENT_SELECT }>;
 type OrderForPayment = Prisma.OrderGetPayload<{ select: typeof ORDER_PAYMENT_SELECT }>;
 
 export interface CreatedPaymentResult {
@@ -84,7 +96,9 @@ export class PaymentRepository {
       data: {
         orderId: order.id,
         provider,
+        reference,
         providerRef: reference,
+        customerEmail: order.user.email,
         amount: order.total,
         currency: order.currency,
         status: PaymentStatus.PENDING,
@@ -94,6 +108,11 @@ export class PaymentRepository {
         },
       },
       select: PAYMENT_SELECT,
+    });
+
+    await prisma.order.update({
+      where: { id: order.id },
+      data: { paymentReference: reference },
     });
 
     return { order, payment: mapPayment(payment) };
@@ -125,7 +144,9 @@ export class PaymentRepository {
       data: {
         orderId: order.id,
         provider,
+        reference,
         providerRef: reference,
+        customerEmail: extractGuestEmail(order.notes) ?? order.user.email,
         amount: order.total,
         currency: order.currency,
         status: PaymentStatus.PENDING,
@@ -138,14 +159,37 @@ export class PaymentRepository {
       select: PAYMENT_SELECT,
     });
 
+    await prisma.order.update({
+      where: { id: order.id },
+      data: { paymentReference: reference },
+    });
+
     return { order, payment: mapPayment(payment) };
   }
 
-  async updatePaymentMetadata(paymentId: string, metadata: Prisma.InputJsonValue): Promise<void> {
-    await prisma.payment.update({
+  async updatePaymentMetadata(
+    paymentId: string,
+    metadata: {
+      authorizationUrl?: string | null;
+      accessCode?: string | null;
+      providerRef?: string | null;
+      gatewayResponse?: string | null;
+      metadata?: Prisma.InputJsonValue;
+    },
+  ): Promise<PaymentSummary> {
+    const payment = await prisma.payment.update({
       where: { id: paymentId },
-      data: { metadata },
+      data: {
+        authorizationUrl: metadata.authorizationUrl,
+        accessCode: metadata.accessCode,
+        providerRef: metadata.providerRef,
+        gatewayResponse: metadata.gatewayResponse,
+        metadata: metadata.metadata,
+      },
+      select: PAYMENT_SELECT,
     });
+
+    return mapPayment(payment);
   }
 
   async findOwnedPayment(
@@ -188,7 +232,7 @@ export class PaymentRepository {
     const payment = await prisma.payment.findFirst({
       where: {
         provider: event.provider,
-        providerRef: event.reference,
+        OR: [{ reference: event.reference }, { providerRef: event.reference }],
       },
       select: {
         ...PAYMENT_SELECT,
@@ -206,7 +250,11 @@ export class PaymentRepository {
       return null;
     }
 
-    if (payment.status === PaymentStatus.SUCCESS || payment.status === PaymentStatus.FAILED) {
+    if (
+      payment.status === PaymentStatus.SUCCESS ||
+      payment.status === PaymentStatus.FAILED ||
+      payment.status === PaymentStatus.REFUNDED
+    ) {
       return mapPayment(payment);
     }
 
@@ -220,11 +268,16 @@ export class PaymentRepository {
     const nextStatus = mapProviderStatus(event.status);
 
     const updatedPayment = await prisma.$transaction(async (tx) => {
+      const paidAt =
+        nextStatus === PaymentStatus.SUCCESS ? new Date() : payment.paidAt;
+
       const savedPayment = await tx.payment.update({
         where: { id: payment.id },
         data: {
           status: nextStatus,
-          paidAt: nextStatus === PaymentStatus.SUCCESS ? new Date() : null,
+          paidAt,
+          verifiedAt: new Date(),
+          amountCaptured: nextStatus === PaymentStatus.SUCCESS ? payment.amount : payment.amountCaptured,
         },
         select: PAYMENT_SELECT,
       });
@@ -232,7 +285,20 @@ export class PaymentRepository {
       if (nextStatus === PaymentStatus.SUCCESS) {
         await tx.order.update({
           where: { id: payment.order.id },
-          data: { status: OrderStatus.CONFIRMED },
+          data: {
+            status: OrderStatus.PAID,
+            paidAt: paidAt ?? new Date(),
+            paymentReference: payment.reference,
+          },
+        });
+      }
+
+      if (nextStatus === PaymentStatus.FAILED) {
+        await tx.order.update({
+          where: { id: payment.order.id },
+          data: {
+            status: OrderStatus.PENDING,
+          },
         });
       }
 
@@ -276,7 +342,7 @@ function mapProviderStatus(status: ProviderEvent['status']): PaymentStatus {
       return PaymentStatus.FAILED;
     case 'PENDING':
     default:
-      return PaymentStatus.PROCESSING;
+      return PaymentStatus.PENDING;
   }
 }
 
@@ -284,19 +350,9 @@ function amountMatches(expected: number, received: number): boolean {
   return Math.abs(expected - received) < 0.01;
 }
 
-function mapPayment(payment: PaymentRecord): PaymentSummary {
-  return {
-    id: payment.id,
-    orderId: payment.orderId,
-    provider: payment.provider,
-    providerRef: payment.providerRef,
-    amount: Number(payment.amount),
-    currency: payment.currency,
-    status: payment.status,
-    paidAt: payment.paidAt?.toISOString() ?? null,
-    createdAt: payment.createdAt.toISOString(),
-    updatedAt: payment.updatedAt.toISOString(),
-  };
+function extractGuestEmail(notes: string | null): string | null {
+  const match = notes?.match(/\[guestEmail:([^\]]+)\]/);
+  return match?.[1] ?? null;
 }
 
 export const paymentRepository = new PaymentRepository();

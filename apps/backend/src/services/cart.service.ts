@@ -41,7 +41,11 @@ export async function addCartItem(userId: string, input: AddCartItemInput): Prom
     }
   }
 
-  const existingLine = await cartRepository.findExistingProductLine(userId, input.product_id);
+  const existingLine = await cartRepository.findExistingProductLine(
+    userId,
+    input.product_id,
+    input.variant_id,
+  );
   if (existingLine) {
     if (existingLine.variantId !== (input.variant_id ?? null)) {
       throw new AppError(
@@ -81,7 +85,7 @@ export async function updateCartItem(
     throw new AppError('Cart item not found', 404, 'CART_ITEM_NOT_FOUND');
   }
 
-  if (item.product.stockType === 'LOCAL') {
+  if (item.product.stockType === 'IN_STOCK') {
     if (item.variant && input.quantity > item.variant.stock) {
       throw new AppError('Requested quantity exceeds available stock', 409, 'INSUFFICIENT_STOCK');
     }

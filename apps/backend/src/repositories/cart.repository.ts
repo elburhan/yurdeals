@@ -2,7 +2,7 @@
 // Cart Repository
 // ============================================
 
-import { Prisma, StockType } from '@prisma/client';
+import { Prisma, ProductApprovalStatus, ProductStockType } from '@prisma/client';
 import { CartData, CartItemSummary } from '@yurdeals/shared';
 import { prisma } from '../config';
 
@@ -27,6 +27,7 @@ const CART_SELECT = {
           slug: true,
           stockType: true,
           currency: true,
+          sourceCountry: true,
           images: {
             where: { isPrimary: true },
             select: {
@@ -62,6 +63,8 @@ const PUBLIC_PRODUCT_SELECT = {
   currency: true,
   stockType: true,
   isActive: true,
+  isPublished: true,
+  approvalStatus: true,
   category: {
     select: {
       isActive: true,
@@ -102,7 +105,7 @@ export interface CartItemStockCheck {
   id: string;
   quantity: number;
   product: {
-    stockType: StockType;
+    stockType: ProductStockType;
     variants: Array<{
       id: string;
       stock: number;
@@ -133,6 +136,8 @@ export class CartRepository {
       where: {
         id: productId,
         isActive: true,
+        isPublished: true,
+        approvalStatus: ProductApprovalStatus.APPROVED,
         category: { isActive: true },
       },
       select: PUBLIC_PRODUCT_SELECT,
@@ -142,10 +147,12 @@ export class CartRepository {
   async findExistingProductLine(
     userId: string,
     productId: string,
+    variantId?: string,
   ): Promise<ExistingCartItem | null> {
     return prisma.cartItem.findFirst({
       where: {
         productId,
+        variantId: variantId ?? null,
         cart: { userId },
       },
       select: {
@@ -202,12 +209,11 @@ export class CartRepository {
         select: { id: true },
       });
 
-      const existingItem = await tx.cartItem.findUnique({
+      const existingItem = await tx.cartItem.findFirst({
         where: {
-          cartId_productId: {
-            cartId: userCart.id,
-            productId: data.productId,
-          },
+          cartId: userCart.id,
+          productId: data.productId,
+          variantId: data.variantId ?? null,
         },
         select: {
           id: true,
@@ -331,6 +337,7 @@ function mapCartItem(item: CartRecord['items'][number]): CartItemSummary {
       slug: item.product.slug,
       stockType: item.product.stockType,
       currency: item.product.currency,
+      sourceCountry: item.product.sourceCountry,
       primaryImage: item.product.images[0] ?? null,
     },
     variant: item.variant
@@ -365,7 +372,7 @@ export function getVariantStock(product: PublicProductRecord, variantId?: string
 }
 
 export function isLocalProduct(product: PublicProductRecord): boolean {
-  return product.stockType === StockType.LOCAL;
+  return product.stockType === ProductStockType.IN_STOCK;
 }
 
 export const cartRepository = new CartRepository();

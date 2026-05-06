@@ -46,12 +46,14 @@ export function getShipmentEventForStatus(
 ): { status: string; location?: string; description: string } | null {
   switch (status) {
     case 'PAYMENT_CONFIRMED':
-    case OrderStatus.CONFIRMED:
+    case OrderStatus.PAID:
       return {
         status: 'PAYMENT_CONFIRMED',
         description: 'Payment confirmed and order is being prepared.',
       };
     case OrderStatus.PROCESSING:
+    case OrderStatus.INSPECTION_PENDING:
+    case OrderStatus.INSPECTION_PASSED:
     case 'PROCESSING_IN_CHINA':
       return {
         status: 'PROCESSING_IN_CHINA',
@@ -59,20 +61,20 @@ export function getShipmentEventForStatus(
         description: 'Your order is being processed with our China fulfillment team.',
       };
     case OrderStatus.SHIPPED:
+    case OrderStatus.IN_TRANSIT:
     case 'SHIPPED_FROM_CHINA':
       return {
         status: 'SHIPPED_FROM_CHINA',
         location: 'China',
         description: 'Your order has shipped from China.',
       };
-    case OrderStatus.CUSTOMS:
     case 'ARRIVED_IN_NIGERIA':
       return {
         status: 'ARRIVED_IN_NIGERIA',
         location: 'Nigeria',
         description: 'Your order has arrived in Nigeria.',
       };
-    case OrderStatus.OUT_FOR_DELIVERY:
+    case 'OUT_FOR_DELIVERY':
       return {
         status: 'OUT_FOR_DELIVERY',
         location: 'Nigeria',

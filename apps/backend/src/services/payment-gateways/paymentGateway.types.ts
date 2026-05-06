@@ -18,6 +18,7 @@ export interface InitializePaymentInput {
 export interface InitializePaymentResult {
   authorizationUrl: string;
   reference: string;
+  accessCode?: string | null;
   providerResponse: unknown;
 }
 

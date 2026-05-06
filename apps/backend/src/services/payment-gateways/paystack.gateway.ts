@@ -20,6 +20,7 @@ interface PaystackInitializeResponse {
   data?: {
     authorization_url: string;
     reference: string;
+    access_code?: string;
   };
 }
 
@@ -86,6 +87,7 @@ export class PaystackGateway implements PaymentGateway {
     return {
       authorizationUrl: body.data.authorization_url,
       reference: body.data.reference,
+      accessCode: body.data.access_code ?? null,
       providerResponse: body,
     };
   }

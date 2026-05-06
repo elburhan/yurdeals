@@ -79,6 +79,7 @@ export class FlutterwaveGateway implements PaymentGateway {
     return {
       authorizationUrl: body.data.link,
       reference: input.reference,
+      accessCode: null,
       providerResponse: body,
     };
   }

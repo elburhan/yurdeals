@@ -34,23 +34,27 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
+const addHandler = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user) {
+      next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
+      return;
+    }
+
+    const data = await addCartItem(req.user.id, req.body as AddCartItemInput);
+    sendSuccess(res, 201, data, 'Item added to cart');
+  } catch (error) {
+    next(error);
+  }
+};
+
 router.post(
   '/items',
   validateBody(addCartItemSchema),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      if (!req.user) {
-        next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
-        return;
-      }
-
-      const data = await addCartItem(req.user.id, req.body as AddCartItemInput);
-      sendSuccess(res, 201, data, 'Item added to cart');
-    } catch (error) {
-      next(error);
-    }
-  },
+  addHandler,
 );
+
+router.post('/add', validateBody(addCartItemSchema), addHandler);
 
 router.put(
   '/items/:cartItemId',
@@ -76,6 +80,26 @@ router.put(
 
 router.delete(
   '/items/:cartItemId',
+  validateParams(cartItemParamsSchema),
+  async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const request = _req;
+      if (!request.user) {
+        next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
+        return;
+      }
+
+      const params = res.locals.validatedParams as CartItemParamsInput;
+      const data = await removeCartItem(request.user.id, params.cartItemId);
+      sendSuccess(res, 200, data, 'Cart item removed');
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.delete(
+  '/:cartItemId',
   validateParams(cartItemParamsSchema),
   async (_req: Request, res: Response, next: NextFunction) => {
     try {
