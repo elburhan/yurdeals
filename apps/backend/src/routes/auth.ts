@@ -11,6 +11,7 @@ import { registerUser, loginUser, getCurrentUser } from '../services/auth.servic
 import { registerSchema, loginSchema } from '../schemas/auth.schema';
 import { clearAuthCookies, setAuthCookies } from '../utils/authCookies';
 import { env } from '../config';
+import { verifyAccessToken } from '../utils/jwt';
 
 const router = Router();
 
@@ -161,5 +162,32 @@ router.get(
     });
   },
 );
+
+router.get('/debug-session', requireAuth, (req: Request, res: Response, next: NextFunction) => {
+  if (!req.user) {
+    next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
+    return;
+  }
+
+  const authorization = req.headers.authorization;
+  const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
+  const accessCookie = (req.cookies as Record<string, string | undefined>)['access_token'];
+  const decodedBearer = bearerToken ? verifyAccessToken(bearerToken) : null;
+  const decodedCookie = accessCookie ? verifyAccessToken(accessCookie) : null;
+
+  res.status(200).json({
+    success: true,
+    data: {
+      user: req.user,
+      authDebug: {
+        hasAuthorizationHeader: Boolean(bearerToken),
+        hasAccessTokenCookie: Boolean(accessCookie),
+        bearerPayload: decodedBearer,
+        cookiePayload: decodedCookie,
+      },
+    },
+    message: 'Debug session retrieved',
+  });
+});
 
 export default router;

@@ -2,7 +2,7 @@
 // Admin Product Repository
 // ============================================
 
-import { Prisma } from '@prisma/client';
+import { Prisma, ProductApprovalStatus } from '@prisma/client';
 import { AdminProductSummary } from '@yurdeals/shared';
 import { prisma } from '../config';
 import {
@@ -92,7 +92,10 @@ export class AdminProductRepository {
         categoryId: input.category_id,
         basePrice: input.base_price,
         currency: input.currency,
+        sourceCountry: 'China',
         stockType: input.stock_type,
+        approvalStatus: ProductApprovalStatus.APPROVED,
+        isPublished: true,
         sku: input.sku ?? null,
         weight: input.weight ?? null,
         isFeatured: input.is_featured,

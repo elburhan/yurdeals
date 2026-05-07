@@ -23,6 +23,10 @@ export const paymentStatusParamsSchema = z.object({
   paymentId: z.string().cuid('Invalid payment id'),
 });
 
+export const guestPaymentStatusQuerySchema = z.object({
+  guest_access_token: z.string().min(20).max(120),
+});
+
 export const webhookProviderParamsSchema = z.object({
   provider: z.enum(['paystack', 'flutterwave']),
 });
@@ -31,4 +35,5 @@ export type InitiatePaymentInput = z.infer<typeof initiatePaymentSchema>;
 export type InitiateGuestPaymentInput = z.infer<typeof initiateGuestPaymentSchema>;
 export type OrderPaymentParamsInput = z.infer<typeof orderPaymentParamsSchema>;
 export type PaymentStatusParamsInput = z.infer<typeof paymentStatusParamsSchema>;
+export type GuestPaymentStatusQueryInput = z.infer<typeof guestPaymentStatusQuerySchema>;
 export type WebhookProviderParamsInput = z.infer<typeof webhookProviderParamsSchema>;

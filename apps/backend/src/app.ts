@@ -14,6 +14,7 @@ import paymentWebhooksRouter from './routes/paymentWebhooks';
 import paystackWebhookRouter from './routes/paystackWebhook';
 
 const app = express();
+const allowedOrigins = env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
 
 // ---- Trust proxy (for rate-limiter behind reverse proxy / HTTPS/ngrok) ----
 if (isProduction || env.NODE_ENV === 'development') {
@@ -26,7 +27,14 @@ app.use(helmetMiddleware);
 // ---- CORS ----
 app.use(
   cors({
-    origin: env.CORS_ORIGIN.split(',').map((o) => o.trim()),
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error('Origin not allowed by CORS'));
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
@@ -39,6 +47,12 @@ app.use(globalRateLimiter);
 // ---- Raw Webhook Routes (must run before JSON parsing for signature verification) ----
 app.use(
   `/api/${env.API_VERSION}/payments/paystack/webhook`,
+  express.raw({ type: 'application/json', limit: '2mb' }),
+  paystackWebhookRouter,
+);
+
+app.use(
+  `/api/${env.API_VERSION}/webhooks/paystack`,
   express.raw({ type: 'application/json', limit: '2mb' }),
   paystackWebhookRouter,
 );
@@ -64,7 +78,7 @@ app.use(morgan(isProduction ? 'combined' : 'dev'));
 
 // ---- Payment Return Redirect ----
 app.get('/payment-return', (req, res) => {
-  const frontendOrigin = env.CORS_ORIGIN.split(',')[0]?.trim() || 'http://localhost:5173';
+  const frontendOrigin = allowedOrigins[0] || 'http://localhost:5173';
   const redirectUrl = new URL('/payment-return', frontendOrigin);
 
   for (const [key, value] of Object.entries(req.query)) {

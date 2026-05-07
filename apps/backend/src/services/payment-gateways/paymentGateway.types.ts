@@ -28,11 +28,18 @@ export interface ProviderEvent {
   status: 'SUCCESS' | 'FAILED' | 'PENDING';
   amount: number;
   currency: string;
+  eventId?: string;
+  eventType?: string;
+  providerTransactionId?: string | null;
+  channel?: string | null;
+  gatewayMessage?: string | null;
+  paidAt?: string | null;
   raw: unknown;
 }
 
 export interface PaymentGateway {
   initializePayment(input: InitializePaymentInput): Promise<InitializePaymentResult>;
+  verifyTransaction?(reference: string): Promise<ProviderEvent>;
   verifyWebhookSignature(rawBody: string | Buffer, headers: Record<string, string>): boolean;
   parseWebhookEvent(rawBody: string | Buffer, headers: Record<string, string>): ProviderEvent;
 }

@@ -27,10 +27,29 @@ interface PaystackInitializeResponse {
 interface PaystackWebhookPayload {
   event?: string;
   data?: {
+    id?: number;
     reference?: string;
     amount?: number;
     currency?: string;
     status?: string;
+    channel?: string;
+    gateway_response?: string;
+    paid_at?: string;
+  };
+}
+
+interface PaystackVerifyResponse {
+  status: boolean;
+  message: string;
+  data?: {
+    id?: number;
+    reference?: string;
+    amount?: number;
+    currency?: string;
+    status?: string;
+    channel?: string;
+    gateway_response?: string;
+    paid_at?: string;
   };
 }
 
@@ -122,7 +141,70 @@ export class PaystackGateway implements PaymentGateway {
       status: mapPaystackStatus(payload.event, payload.data?.status),
       amount: Number(payload.data?.amount ?? 0) / 100,
       currency: payload.data?.currency ?? 'NGN',
+      eventId: buildPaystackEventId(
+        payload.event,
+        payload.data?.id,
+        reference,
+        payload.data?.status,
+      ),
+      eventType: payload.event ?? 'paystack.webhook',
+      providerTransactionId: payload.data?.id ? String(payload.data.id) : null,
+      channel: payload.data?.channel ?? null,
+      gatewayMessage: payload.data?.gateway_response ?? null,
+      paidAt: payload.data?.paid_at ?? null,
       raw: payload,
+    };
+  }
+
+  async verifyTransaction(reference: string): Promise<ProviderEvent> {
+    logger.debug('Verifying Paystack transaction', {
+      reference,
+      url: `https://api.paystack.co/transaction/verify/${reference}`,
+    });
+
+    const response = await fetch(
+      `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`,
+        },
+      },
+    );
+
+    const body = (await response.json()) as PaystackVerifyResponse;
+
+    if (!response.ok || !body.status || !body.data?.reference) {
+      logger.warn('Paystack transaction verification failed', {
+        status: response.status,
+        reference,
+        message: body.message,
+      });
+
+      throw new AppError(
+        body.message || 'Unable to verify Paystack payment',
+        502,
+        'PAYSTACK_VERIFY_ERROR',
+      );
+    }
+
+    return {
+      provider: PaymentProvider.PAYSTACK,
+      reference: body.data.reference,
+      status: mapPaystackStatus('transaction.verify', body.data.status),
+      amount: Number(body.data.amount ?? 0) / 100,
+      currency: body.data.currency ?? 'NGN',
+      eventId: buildPaystackEventId(
+        'transaction.verify',
+        body.data.id,
+        body.data.reference,
+        body.data.status,
+      ),
+      eventType: 'transaction.verify',
+      providerTransactionId: body.data.id ? String(body.data.id) : null,
+      channel: body.data.channel ?? null,
+      gatewayMessage: body.data.gateway_response ?? null,
+      paidAt: body.data.paid_at ?? null,
+      raw: body,
     };
   }
 }
@@ -136,11 +218,24 @@ function mapPaystackStatus(event?: string, status?: string): ProviderEvent['stat
     return 'SUCCESS';
   }
 
-  if (status === 'failed' || status === 'abandoned') {
+  if (status === 'failed' || status === 'abandoned' || status === 'reversed') {
     return 'FAILED';
   }
 
   return 'PENDING';
+}
+
+function buildPaystackEventId(
+  event: string | undefined,
+  transactionId: number | undefined,
+  reference: string,
+  status: string | undefined,
+): string {
+  if (transactionId) {
+    return `paystack:${event ?? 'event'}:${transactionId}`;
+  }
+
+  return `paystack:${event ?? 'event'}:${reference}:${status ?? 'unknown'}`;
 }
 
 function withPaymentReturnParams(baseUrl: string, input: InitializePaymentInput): string {

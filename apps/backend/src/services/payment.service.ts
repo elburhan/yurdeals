@@ -3,11 +3,11 @@
 // ============================================
 
 import crypto from 'crypto';
-import { PaymentProvider } from '@prisma/client';
+import { PaymentProvider, PaymentStatus } from '@prisma/client';
 import { PaymentInitiationData, PaymentStatusData } from '@yurdeals/shared';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils';
-import { paymentRepository } from '../repositories/payment.repository';
+import { paymentRepository, VerifiablePaymentRecord } from '../repositories/payment.repository';
 import { InitiateGuestPaymentInput, InitiatePaymentInput } from '../schemas/payment.schema';
 import { FlutterwaveGateway } from './payment-gateways/flutterwave.gateway';
 import { writeAuditLog } from './audit.service';
@@ -16,7 +16,7 @@ import { PaymentGateway, ProviderEvent } from './payment-gateways/paymentGateway
 import { PaystackGateway } from './payment-gateways/paystack.gateway';
 import { handleOrderStatusTransition } from './shipmentEvent.service';
 import { CreateOrderInput } from '../schemas/order.schema';
-import { orderRepository } from '../repositories/order.repository';
+import { mapPayment, orderRepository } from '../repositories/order.repository';
 
 const gateways = {
   PAYSTACK: new PaystackGateway(),
@@ -180,6 +180,10 @@ export async function getPaymentStatus(
     throw new AppError('Payment not found', 404, 'PAYMENT_NOT_FOUND');
   }
 
+  if (shouldVerifyPayment(payment.status)) {
+    return verifyPayment(userId, orderId, paymentId);
+  }
+
   return { payment };
 }
 
@@ -194,7 +198,43 @@ export async function getGuestPaymentStatus(
     throw new AppError('Payment not found', 404, 'PAYMENT_NOT_FOUND');
   }
 
+  if (shouldVerifyPayment(payment.status)) {
+    return verifyGuestPayment(orderId, paymentId, guestAccessToken);
+  }
+
   return { payment };
+}
+
+export async function verifyPayment(
+  userId: string,
+  orderId: string,
+  paymentId: string,
+): Promise<PaymentStatusData> {
+  const payment = await paymentRepository.findOwnedPaymentForVerification(userId, orderId, paymentId);
+
+  if (!payment) {
+    throw new AppError('Payment not found', 404, 'PAYMENT_NOT_FOUND');
+  }
+
+  return verifyPaymentRecord(payment);
+}
+
+export async function verifyGuestPayment(
+  orderId: string,
+  paymentId: string,
+  guestAccessToken: string,
+): Promise<PaymentStatusData> {
+  const payment = await paymentRepository.findGuestPaymentForVerification(
+    orderId,
+    paymentId,
+    guestAccessToken,
+  );
+
+  if (!payment) {
+    throw new AppError('Payment not found', 404, 'PAYMENT_NOT_FOUND');
+  }
+
+  return verifyPaymentRecord(payment);
 }
 
 export async function handlePaymentWebhook(
@@ -218,46 +258,9 @@ export async function handlePaymentWebhook(
     event = await verifyFlutterwaveEvent(event);
   }
 
-  const payment = await paymentRepository.processWebhookEvent(event);
+  const result = await paymentRepository.processWebhookEvent(event);
 
-  if (payment) {
-    const context = await paymentRepository.findPaymentEventContext(payment.id);
-
-    if (context && payment.status === 'SUCCESS') {
-      await notifyPaymentSuccess(context.order.userId, context.order, context.payment);
-      await handleOrderStatusTransition(context.order.id, 'PAYMENT_CONFIRMED');
-      await writeAuditLog({
-        userId: context.order.userId,
-        action: 'PAYMENT_WEBHOOK_SUCCESS',
-        entity: 'Payment',
-        entityId: context.payment.id,
-        newData: {
-          orderId: context.order.id,
-          provider,
-          reference: event.reference,
-          amount: event.amount,
-          currency: event.currency,
-        },
-      });
-    }
-
-    if (context && payment.status === 'FAILED') {
-      await notifyPaymentFailed(context.order.userId, context.order, context.payment);
-      await writeAuditLog({
-        userId: context.order.userId,
-        action: 'PAYMENT_WEBHOOK_FAILED',
-        entity: 'Payment',
-        entityId: context.payment.id,
-        newData: {
-          orderId: context.order.id,
-          provider,
-          reference: event.reference,
-          amount: event.amount,
-          currency: event.currency,
-        },
-      });
-    }
-  } else {
+  if (!result.payment) {
     await writeAuditLog({
       action: 'PAYMENT_WEBHOOK_IGNORED',
       entity: 'Payment',
@@ -265,6 +268,104 @@ export async function handlePaymentWebhook(
       newData: {
         provider,
         reference: event.reference,
+        status: event.status,
+        reason: 'PAYMENT_NOT_FOUND',
+      },
+    });
+
+    logger.warn('Payment webhook ignored because payment was not found', {
+      provider,
+      reference: event.reference,
+      eventId: result.eventId,
+    });
+
+    return null;
+  }
+
+  if (result.mismatch) {
+    await writeAuditLog({
+      action: 'PAYMENT_WEBHOOK_MISMATCH',
+      entity: 'Payment',
+      entityId: result.payment.id,
+      newData: {
+        provider,
+        reference: event.reference,
+        eventId: result.eventId,
+        amount: event.amount,
+        currency: event.currency,
+      },
+    });
+
+    logger.error('Payment webhook failed reconciliation checks', {
+      provider,
+      paymentId: result.payment.id,
+      reference: event.reference,
+      eventId: result.eventId,
+    });
+
+    return { payment: result.payment };
+  }
+
+  if (result.duplicate) {
+    logger.info('Duplicate payment webhook ignored', {
+      provider,
+      paymentId: result.payment.id,
+      reference: event.reference,
+      eventId: result.eventId,
+    });
+
+    return { payment: result.payment };
+  }
+
+  const payment = result.payment;
+  const context = await paymentRepository.findPaymentEventContext(payment.id);
+
+  if (context && result.statusChanged && payment.status === 'SUCCESS') {
+    await notifyPaymentSuccess(context.order.userId, context.order, context.payment);
+    await handleOrderStatusTransition(context.order.id, 'PAYMENT_CONFIRMED');
+    await writeAuditLog({
+      userId: context.order.userId,
+      action: 'PAYMENT_WEBHOOK_SUCCESS',
+      entity: 'Payment',
+      entityId: context.payment.id,
+      newData: {
+        orderId: context.order.id,
+        provider,
+        reference: event.reference,
+        eventId: result.eventId,
+        amount: event.amount,
+        currency: event.currency,
+      },
+    });
+  }
+
+  if (context && result.statusChanged && payment.status === 'FAILED') {
+    await notifyPaymentFailed(context.order.userId, context.order, context.payment);
+    await writeAuditLog({
+      userId: context.order.userId,
+      action: 'PAYMENT_WEBHOOK_FAILED',
+      entity: 'Payment',
+      entityId: context.payment.id,
+      newData: {
+        orderId: context.order.id,
+        provider,
+        reference: event.reference,
+        eventId: result.eventId,
+        amount: event.amount,
+        currency: event.currency,
+      },
+    });
+  }
+
+  if (result.ignored) {
+    await writeAuditLog({
+      action: 'PAYMENT_WEBHOOK_IGNORED',
+      entity: 'Payment',
+      entityId: payment.id,
+      newData: {
+        provider,
+        reference: event.reference,
+        eventId: result.eventId,
         status: event.status,
       },
     });
@@ -274,10 +375,95 @@ export async function handlePaymentWebhook(
     provider,
     reference: event.reference,
     status: event.status,
-    paymentId: payment?.id,
+    paymentId: payment.id,
+    eventId: result.eventId,
+    duplicate: result.duplicate,
+    statusChanged: result.statusChanged,
   });
 
-  return payment ? { payment } : null;
+  return { payment };
+}
+
+async function verifyPaymentRecord(
+  payment: VerifiablePaymentRecord,
+): Promise<PaymentStatusData> {
+  if (!shouldVerifyPayment(payment.status)) {
+    return { payment: mapPayment(payment) };
+  }
+
+  const gateway = getGateway(payment.provider as Extract<PaymentProvider, 'PAYSTACK' | 'FLUTTERWAVE'>);
+
+  if (!gateway.verifyTransaction) {
+    return { payment: mapPayment(payment) };
+  }
+
+  const reference = payment.providerRef || payment.reference;
+  logger.info('Verifying payment with provider', {
+    paymentId: payment.id,
+    orderId: payment.order.id,
+    provider: payment.provider,
+    reference,
+  });
+
+  const event = await gateway.verifyTransaction(reference);
+  const result = await paymentRepository.processWebhookEvent(event);
+
+  if (!result.payment) {
+    throw new AppError('Payment verification did not match a payment record', 404, 'PAYMENT_NOT_FOUND');
+  }
+
+  if (result.mismatch) {
+    throw new AppError(
+      'Payment verification failed reconciliation checks',
+      409,
+      'PAYMENT_MISMATCH',
+    );
+  }
+
+  if (result.statusChanged && result.payment.status === 'SUCCESS') {
+    const context = await paymentRepository.findPaymentEventContext(result.payment.id);
+
+    if (context) {
+      await notifyPaymentSuccess(context.order.userId, context.order, context.payment);
+      await handleOrderStatusTransition(context.order.id, 'PAYMENT_CONFIRMED');
+      await writeAuditLog({
+        userId: context.order.userId,
+        action: 'PAYMENT_VERIFIED_SUCCESS',
+        entity: 'Payment',
+        entityId: context.payment.id,
+        newData: {
+          orderId: context.order.id,
+          provider: payment.provider,
+          reference: event.reference,
+          amount: event.amount,
+          currency: event.currency,
+        },
+      });
+    }
+  }
+
+  if (result.statusChanged && result.payment.status === 'FAILED') {
+    const context = await paymentRepository.findPaymentEventContext(result.payment.id);
+
+    if (context) {
+      await notifyPaymentFailed(context.order.userId, context.order, context.payment);
+      await writeAuditLog({
+        userId: context.order.userId,
+        action: 'PAYMENT_VERIFIED_FAILED',
+        entity: 'Payment',
+        entityId: context.payment.id,
+        newData: {
+          orderId: context.order.id,
+          provider: payment.provider,
+          reference: event.reference,
+          amount: event.amount,
+          currency: event.currency,
+        },
+      });
+    }
+  }
+
+  return { payment: result.payment };
 }
 
 function getGateway(
@@ -294,6 +480,10 @@ async function verifyFlutterwaveEvent(event: ProviderEvent): Promise<ProviderEve
   }
 
   return gateway.verifyTransaction(event.reference);
+}
+
+function shouldVerifyPayment(status: PaymentStatusData['payment']['status']): boolean {
+  return status === PaymentStatus.PENDING || status === PaymentStatus.AUTHORIZED;
 }
 
 function createPaymentReference(provider: PaymentProvider): string {

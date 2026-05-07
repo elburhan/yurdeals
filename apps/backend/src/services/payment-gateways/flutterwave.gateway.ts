@@ -114,6 +114,9 @@ export class FlutterwaveGateway implements PaymentGateway {
       status: mapFlutterwaveStatus(payload.data?.status),
       amount: Number(payload.data?.amount ?? 0),
       currency: payload.data?.currency ?? 'NGN',
+      eventId: `flutterwave:${payload.event ?? 'event'}:${reference}`,
+      eventType: payload.event ?? 'flutterwave.webhook',
+      providerTransactionId: null,
       raw: payload,
     };
   }
@@ -144,6 +147,9 @@ export class FlutterwaveGateway implements PaymentGateway {
       status: mapFlutterwaveStatus(body.data.status),
       amount: Number(body.data.amount ?? 0),
       currency: body.data.currency ?? 'NGN',
+      eventId: `flutterwave:transaction.verify:${body.data.tx_ref}`,
+      eventType: 'transaction.verify',
+      providerTransactionId: null,
       raw: body,
     };
   }

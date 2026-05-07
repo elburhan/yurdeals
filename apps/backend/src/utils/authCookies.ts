@@ -3,15 +3,19 @@
 // ============================================
 
 import { Response } from 'express';
-import { isProduction } from '../config';
+import { env, isProduction } from '../config';
 
 const ACCESS_TOKEN_MAX_AGE_MS = 15 * 60 * 1000;
 const REFRESH_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const allowedOrigins = env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
+const hasCrossOriginHttpsClient = allowedOrigins.some((origin) => origin.startsWith('https://'));
+const cookieSameSite = isProduction ? ('none' as const) : ('lax' as const);
+const cookieSecure = isProduction || (cookieSameSite === 'none' && hasCrossOriginHttpsClient);
 
 const AUTH_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: isProduction,
-  sameSite: 'lax' as const,
+  secure: cookieSecure,
+  sameSite: cookieSameSite,
   path: '/',
 };
 

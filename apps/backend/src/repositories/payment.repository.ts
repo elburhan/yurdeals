@@ -56,7 +56,30 @@ const ORDER_PAYMENT_SELECT = {
   },
 } satisfies Prisma.OrderSelect;
 
+const VERIFIABLE_PAYMENT_SELECT = {
+  ...PAYMENT_SELECT,
+  order: {
+    select: {
+      id: true,
+      orderNumber: true,
+      userId: true,
+      total: true,
+      currency: true,
+      status: true,
+      notes: true,
+      user: {
+        select: {
+          email: true,
+        },
+      },
+    },
+  },
+} satisfies Prisma.PaymentSelect;
+
 type OrderForPayment = Prisma.OrderGetPayload<{ select: typeof ORDER_PAYMENT_SELECT }>;
+export type VerifiablePaymentRecord = Prisma.PaymentGetPayload<{
+  select: typeof VERIFIABLE_PAYMENT_SELECT;
+}>;
 
 export interface CreatedPaymentResult {
   order: OrderForPayment;
@@ -70,6 +93,16 @@ export interface PaymentEventContext {
     orderNumber: string;
     userId: string;
   };
+}
+
+export interface ProcessWebhookResult {
+  payment: PaymentSummary | null;
+  duplicate: boolean;
+  ignored: boolean;
+  mismatch: boolean;
+  statusChanged: boolean;
+  previousStatus: PaymentStatus | null;
+  eventId: string | null;
 }
 
 export class PaymentRepository {
@@ -228,84 +261,191 @@ export class PaymentRepository {
     return payment ? mapPayment(payment) : null;
   }
 
-  async processWebhookEvent(event: ProviderEvent): Promise<PaymentSummary | null> {
+  async findOwnedPaymentForVerification(
+    userId: string,
+    orderId: string,
+    paymentId: string,
+  ): Promise<VerifiablePaymentRecord | null> {
+    return prisma.payment.findFirst({
+      where: {
+        id: paymentId,
+        orderId,
+        order: { userId },
+      },
+      select: VERIFIABLE_PAYMENT_SELECT,
+    });
+  }
+
+  async findGuestPaymentForVerification(
+    orderId: string,
+    paymentId: string,
+    guestAccessToken: string,
+  ): Promise<VerifiablePaymentRecord | null> {
+    return prisma.payment.findFirst({
+      where: {
+        id: paymentId,
+        orderId,
+        order: {
+          notes: { contains: createGuestTokenTag(guestAccessToken) },
+        },
+      },
+      select: VERIFIABLE_PAYMENT_SELECT,
+    });
+  }
+
+  async processWebhookEvent(event: ProviderEvent): Promise<ProcessWebhookResult> {
     const payment = await prisma.payment.findFirst({
       where: {
         provider: event.provider,
         OR: [{ reference: event.reference }, { providerRef: event.reference }],
       },
-      select: {
-        ...PAYMENT_SELECT,
-        order: {
-          select: {
-            id: true,
-            total: true,
-            currency: true,
-          },
-        },
-      },
+      select: VERIFIABLE_PAYMENT_SELECT,
     });
 
     if (!payment) {
-      return null;
+      return {
+        payment: null,
+        duplicate: false,
+        ignored: true,
+        mismatch: false,
+        statusChanged: false,
+        previousStatus: null,
+        eventId: event.eventId ?? null,
+      };
     }
 
-    if (
-      payment.status === PaymentStatus.SUCCESS ||
-      payment.status === PaymentStatus.FAILED ||
-      payment.status === PaymentStatus.REFUNDED
-    ) {
-      return mapPayment(payment);
-    }
-
-    if (
-      !amountMatches(Number(payment.order.total), event.amount) ||
-      payment.order.currency !== event.currency
-    ) {
-      throw new AppError('Webhook payment amount or currency mismatch', 409, 'PAYMENT_MISMATCH');
-    }
-
+    const eventId = buildPaymentEventId(event);
     const nextStatus = mapProviderStatus(event.status);
+    const previousStatus = payment.status;
 
-    const updatedPayment = await prisma.$transaction(async (tx) => {
-      const paidAt =
-        nextStatus === PaymentStatus.SUCCESS ? new Date() : payment.paidAt;
+    try {
+      return await prisma.$transaction(async (tx) => {
+        if (eventId) {
+          const existingEvent = await tx.paymentEvent.findUnique({
+            where: { eventId },
+            select: { id: true },
+          });
 
-      const savedPayment = await tx.payment.update({
-        where: { id: payment.id },
-        data: {
-          status: nextStatus,
-          paidAt,
-          verifiedAt: new Date(),
-          amountCaptured: nextStatus === PaymentStatus.SUCCESS ? payment.amount : payment.amountCaptured,
-        },
-        select: PAYMENT_SELECT,
+          if (existingEvent) {
+            return {
+              payment: mapPayment(payment),
+              duplicate: true,
+              ignored: false,
+              mismatch: false,
+              statusChanged: false,
+              previousStatus,
+              eventId,
+            };
+          }
+        }
+
+        const amountOk = amountMatches(Number(payment.order.total), event.amount);
+        const currencyOk = payment.order.currency === event.currency;
+
+        await tx.paymentEvent.create({
+          data: {
+            paymentId: payment.id,
+            provider: event.provider,
+            eventType: event.eventType ?? 'payment.event',
+            eventId,
+            status: nextStatus,
+            payload: buildPaymentEventPayload(event, amountOk, currencyOk),
+          },
+        });
+
+        if (!amountOk || !currencyOk) {
+          return {
+            payment: mapPayment(payment),
+            duplicate: false,
+            ignored: false,
+            mismatch: true,
+            statusChanged: false,
+            previousStatus,
+            eventId,
+          };
+        }
+
+        if (isFinalPaymentStatus(payment.status)) {
+          return {
+            payment: mapPayment(payment),
+            duplicate: false,
+            ignored: false,
+            mismatch: false,
+            statusChanged: false,
+            previousStatus,
+            eventId,
+          };
+        }
+
+        const paidAt =
+          nextStatus === PaymentStatus.SUCCESS
+            ? parseEventPaidAt(event.paidAt) ?? payment.paidAt ?? new Date()
+            : payment.paidAt;
+
+        const savedPayment = await tx.payment.update({
+          where: { id: payment.id },
+          data: {
+            status: nextStatus,
+            paidAt,
+            verifiedAt: new Date(),
+            providerTransactionId: event.providerTransactionId ?? payment.providerTransactionId,
+            channel: event.channel ?? payment.channel,
+            gatewayResponse: stringifyPayload(event.raw),
+            amountCaptured:
+              nextStatus === PaymentStatus.SUCCESS
+                ? payment.amount
+                : payment.amountCaptured,
+          },
+          select: PAYMENT_SELECT,
+        });
+
+        if (nextStatus === PaymentStatus.SUCCESS) {
+          await tx.order.update({
+            where: { id: payment.order.id },
+            data: {
+              status: OrderStatus.PAID,
+              paidAt,
+              paymentReference: payment.reference,
+            },
+          });
+        } else if (nextStatus === PaymentStatus.FAILED && payment.order.status === OrderStatus.PENDING) {
+          await tx.order.update({
+            where: { id: payment.order.id },
+            data: {
+              status: OrderStatus.PENDING,
+            },
+          });
+        }
+
+        return {
+          payment: mapPayment(savedPayment),
+          duplicate: false,
+          ignored: false,
+          mismatch: false,
+          statusChanged: savedPayment.status !== previousStatus,
+          previousStatus,
+          eventId,
+        };
       });
-
-      if (nextStatus === PaymentStatus.SUCCESS) {
-        await tx.order.update({
-          where: { id: payment.order.id },
-          data: {
-            status: OrderStatus.PAID,
-            paidAt: paidAt ?? new Date(),
-            paymentReference: payment.reference,
-          },
-        });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002' &&
+        eventId
+      ) {
+        return {
+          payment: mapPayment(payment),
+          duplicate: true,
+          ignored: false,
+          mismatch: false,
+          statusChanged: false,
+          previousStatus,
+          eventId,
+        };
       }
 
-      if (nextStatus === PaymentStatus.FAILED) {
-        await tx.order.update({
-          where: { id: payment.order.id },
-          data: {
-            status: OrderStatus.PENDING,
-          },
-        });
-      }
-
-      return savedPayment;
-    });
-
-    return mapPayment(updatedPayment);
+      throw error;
+    }
   }
 
   async findPaymentEventContext(paymentId: string): Promise<PaymentEventContext | null> {
@@ -346,6 +486,14 @@ function mapProviderStatus(status: ProviderEvent['status']): PaymentStatus {
   }
 }
 
+function isFinalPaymentStatus(status: PaymentStatus): boolean {
+  return (
+    status === PaymentStatus.SUCCESS ||
+    status === PaymentStatus.FAILED ||
+    status === PaymentStatus.REFUNDED
+  );
+}
+
 function amountMatches(expected: number, received: number): boolean {
   return Math.abs(expected - received) < 0.01;
 }
@@ -353,6 +501,46 @@ function amountMatches(expected: number, received: number): boolean {
 function extractGuestEmail(notes: string | null): string | null {
   const match = notes?.match(/\[guestEmail:([^\]]+)\]/);
   return match?.[1] ?? null;
+}
+
+function buildPaymentEventId(event: ProviderEvent): string {
+  return (
+    event.eventId ??
+    `${event.provider.toLowerCase()}:${event.eventType ?? 'payment.event'}:${event.reference}:${event.status}`
+  );
+}
+
+function buildPaymentEventPayload(
+  event: ProviderEvent,
+  amountMatched: boolean,
+  currencyMatched: boolean,
+): Prisma.InputJsonValue {
+  return {
+    amountMatched,
+    currencyMatched,
+    providerTransactionId: event.providerTransactionId ?? null,
+    channel: event.channel ?? null,
+    gatewayMessage: event.gatewayMessage ?? null,
+    paidAt: event.paidAt ?? null,
+    raw: ensureJsonCompatible(event.raw),
+  };
+}
+
+function stringifyPayload(payload: unknown): string {
+  return JSON.stringify(ensureJsonCompatible(payload));
+}
+
+function ensureJsonCompatible(payload: unknown): Prisma.JsonValue {
+  return JSON.parse(JSON.stringify(payload ?? null)) as Prisma.JsonValue;
+}
+
+function parseEventPaidAt(paidAt: string | null | undefined): Date | null {
+  if (!paidAt) {
+    return null;
+  }
+
+  const parsed = new Date(paidAt);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 export const paymentRepository = new PaymentRepository();
