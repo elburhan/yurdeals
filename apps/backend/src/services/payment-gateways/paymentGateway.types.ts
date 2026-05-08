@@ -28,6 +28,7 @@ export interface ProviderEvent {
   status: 'SUCCESS' | 'FAILED' | 'PENDING';
   amount: number;
   currency: string;
+  authorizationCode?: string | null;
   eventId?: string;
   eventType?: string;
   providerTransactionId?: string | null;

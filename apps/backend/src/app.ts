@@ -6,12 +6,18 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import compression from 'compression';
-import morgan from 'morgan';
 import { env, isProduction } from './config';
-import { helmetMiddleware, globalRateLimiter, notFoundHandler, errorHandler } from './middleware';
+import {
+  helmetMiddleware,
+  globalRateLimiter,
+  notFoundHandler,
+  errorHandler,
+  requestLogger,
+} from './middleware';
 import routes from './routes';
 import paymentWebhooksRouter from './routes/paymentWebhooks';
 import paystackWebhookRouter from './routes/paystackWebhook';
+import { verifyPaymentReturn } from './services/payment.service';
 
 const app = express();
 const allowedOrigins = env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
@@ -20,6 +26,9 @@ const allowedOrigins = env.CORS_ORIGIN.split(',').map((origin) => origin.trim())
 if (isProduction || env.NODE_ENV === 'development') {
   app.set('trust proxy', 1);
 }
+
+// ---- Request Correlation / Structured Logging ----
+app.use(requestLogger);
 
 // ---- Security Headers ----
 app.use(helmetMiddleware);
@@ -73,27 +82,36 @@ app.use(cookieParser(env.COOKIE_SECRET));
 // ---- Compression ----
 app.use(compression());
 
-// ---- Request Logging ----
-app.use(morgan(isProduction ? 'combined' : 'dev'));
-
 // ---- Payment Return Redirect ----
-app.get('/payment-return', (req, res) => {
-  const frontendOrigin = allowedOrigins[0] || 'http://localhost:5173';
-  const redirectUrl = new URL('/payment-return', frontendOrigin);
+app.get('/payment-return', async (req, res, next) => {
+  try {
+    // Paystack redirect/callback is not treated as proof of success.
+    // We verify the reference server-side before sending the browser back to the frontend.
+    await verifyPaymentReturn({
+      orderId: typeof req.query.orderId === 'string' ? req.query.orderId : undefined,
+      paymentId: typeof req.query.paymentId === 'string' ? req.query.paymentId : undefined,
+      reference: typeof req.query.reference === 'string' ? req.query.reference : undefined,
+    });
 
-  for (const [key, value] of Object.entries(req.query)) {
-    if (typeof value === 'string') {
-      redirectUrl.searchParams.set(key, value);
-    } else if (Array.isArray(value)) {
-      value.forEach((item) => {
-        if (typeof item === 'string') {
-          redirectUrl.searchParams.append(key, item);
-        }
-      });
+    const frontendOrigin = allowedOrigins[0] || 'http://localhost:5173';
+    const redirectUrl = new URL('/payment-return', frontendOrigin);
+
+    for (const [key, value] of Object.entries(req.query)) {
+      if (typeof value === 'string') {
+        redirectUrl.searchParams.set(key, value);
+      } else if (Array.isArray(value)) {
+        value.forEach((item) => {
+          if (typeof item === 'string') {
+            redirectUrl.searchParams.append(key, item);
+          }
+        });
+      }
     }
-  }
 
-  res.redirect(302, redirectUrl.toString());
+    res.redirect(302, redirectUrl.toString());
+  } catch (error) {
+    next(error);
+  }
 });
 
 // ---- API Routes ----

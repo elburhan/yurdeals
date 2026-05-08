@@ -149,13 +149,39 @@ const ORDER_TRACKING_SELECT = {
   },
 } satisfies Prisma.OrderSelect;
 
+const PUBLIC_TRACKING_ORDER_SELECT = {
+  ...ORDER_SELECT,
+  payments: {
+    where: {
+      status: { in: [PaymentStatus.SUCCESS, PaymentStatus.FAILED, PaymentStatus.AUTHORIZED] },
+    },
+    select: {
+      status: true,
+      paidAt: true,
+      updatedAt: true,
+    },
+    orderBy: { updatedAt: 'asc' },
+  },
+  shipments: {
+    select: {
+      estimatedAt: true,
+    },
+    orderBy: { createdAt: 'asc' },
+    take: 1,
+  },
+  user: {
+    select: {
+      phone: true,
+    },
+  },
+} satisfies Prisma.OrderSelect;
+
 type OrderRecord = Prisma.OrderGetPayload<{ select: typeof ORDER_SELECT }>;
 type OrderWithUserAndPaymentsRecord = Prisma.OrderGetPayload<{
   select: typeof ORDER_WITH_USER_AND_PAYMENTS_SELECT;
 }>;
 type OrderEventRecord = Prisma.OrderGetPayload<{ select: typeof ORDER_EVENT_SELECT }>;
 type OrderTrackingRecord = Prisma.OrderGetPayload<{ select: typeof ORDER_TRACKING_SELECT }>;
-
 interface CartCheckoutItem {
   id: string;
   productId: string;
@@ -236,10 +262,6 @@ export class OrderRepository {
         throw new AppError('Order not found', 404, 'ORDER_NOT_FOUND');
       }
 
-      if (existingOrder.status !== OrderStatus.PENDING) {
-        throw new AppError('Only pending orders can be cancelled', 409, 'ORDER_NOT_CANCELLABLE');
-      }
-
       if (
         existingOrder.payments.some(
           (payment) =>
@@ -247,7 +269,19 @@ export class OrderRepository {
             payment.status === PaymentStatus.AUTHORIZED,
         )
       ) {
-        throw new AppError('Paid orders cannot be cancelled here', 409, 'ORDER_ALREADY_PAID');
+        throw new AppError(
+          'Paid orders cannot be cancelled from your account. Please contact support if you need help.',
+          409,
+          'ORDER_ALREADY_PAID',
+        );
+      }
+
+      if (existingOrder.status !== OrderStatus.PENDING) {
+        throw new AppError(
+          'Only pending orders can be cancelled. Orders already in processing or shipping cannot be cancelled here.',
+          409,
+          'ORDER_NOT_CANCELLABLE',
+        );
       }
 
       await tx.payment.updateMany({
@@ -342,10 +376,11 @@ export class OrderRepository {
       validateCartCheckoutItems(cart.items);
 
       const totals = calculateTotals(cart.items);
+      const orderNumber = await getNextOrderNumber(tx);
 
       const createdOrder = await tx.order.create({
         data: {
-          orderNumber: createOrderNumber(),
+          orderNumber,
           userId,
           status: OrderStatus.PENDING,
           stockTypeSnapshot: deriveOrderStockSnapshot(cart.items),
@@ -444,10 +479,11 @@ export class OrderRepository {
 
       validateCartCheckoutItems(cart.items);
       const totals = calculateTotals(cart.items);
+      const orderNumber = await getNextOrderNumber(tx);
 
       const order = await tx.order.create({
         data: {
-          orderNumber: createOrderNumber(),
+          orderNumber,
           userId,
           status: OrderStatus.PENDING,
           stockTypeSnapshot: deriveOrderStockSnapshot(cart.items),
@@ -650,10 +686,11 @@ export class OrderRepository {
         },
         select: { id: true },
       });
+      const orderNumber = await getNextOrderNumber(tx);
 
       return tx.order.create({
         data: {
-          orderNumber: createOrderNumber(),
+          orderNumber,
           userId: user.id,
           status: OrderStatus.PENDING,
           stockTypeSnapshot: deriveOrderStockSnapshot(orderItems),
@@ -701,6 +738,51 @@ export class OrderRepository {
       where: { id: orderId, userId },
       select: ORDER_TRACKING_SELECT,
     });
+  }
+
+  async findPublicTrackingOrdersByPhone(
+    normalizedPhone: string,
+    orderNumber?: string,
+  ): Promise<Array<{ order: OrderSummary; trackingBase: OrderTrackingRecord }>> {
+    const phoneVariants = createPhoneVariants(normalizedPhone);
+
+    const orders = await prisma.order.findMany({
+      where: {
+        AND: [
+          {
+            OR: [
+              { shippingAddress: { is: { phone: { in: phoneVariants } } } },
+              { user: { is: { phone: { in: phoneVariants } } } },
+            ],
+          },
+          ...(orderNumber
+            ? [
+                {
+                  orderNumber: {
+                    equals: orderNumber.trim(),
+                    mode: 'insensitive' as const,
+                  },
+                },
+              ]
+            : []),
+        ],
+      },
+      select: PUBLIC_TRACKING_ORDER_SELECT,
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+
+    return orders.map((order) => ({
+      order: mapOrder(order),
+      trackingBase: {
+        id: order.id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        createdAt: order.createdAt,
+        payments: order.payments,
+        shipments: order.shipments,
+      },
+    }));
   }
 
   private async markWhatsappCheckoutInternal(input: {
@@ -837,10 +919,26 @@ function createInternalGuestEmail(): string {
   return `guest+${crypto.randomUUID()}@internal.yurdeals.local`;
 }
 
-export function createOrderNumber(): string {
-  const timestamp = Date.now().toString(36).toUpperCase();
-  const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
-  return `YD-${timestamp}-${suffix}`;
+async function getNextOrderNumber(tx: Prisma.TransactionClient): Promise<string> {
+  const [result] = await tx.$queryRaw<Array<{ orderNumber: string }>>`
+    SELECT CONCAT('YD', nextval('order_number_seq')::text) AS "orderNumber"
+  `;
+
+  if (!result?.orderNumber) {
+    throw new AppError('Unable to generate order number', 500, 'ORDER_NUMBER_GENERATION_FAILED');
+  }
+
+  return result.orderNumber;
+}
+
+function createPhoneVariants(normalizedPhone: string): string[] {
+  const digitsOnly = normalizedPhone.replace(/[^\d]/g, '');
+  const localDigits = digitsOnly.startsWith('234') ? digitsOnly.slice(3) : digitsOnly;
+  const localFormat = localDigits ? `0${localDigits}` : normalizedPhone;
+  const international = digitsOnly.startsWith('234') ? `+${digitsOnly}` : normalizedPhone;
+  const compactInternational = digitsOnly.startsWith('234') ? digitsOnly : `234${localDigits}`;
+
+  return Array.from(new Set([normalizedPhone, international, compactInternational, localFormat]));
 }
 
 function mapOrder(order: OrderRecord): OrderSummary {

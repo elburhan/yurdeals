@@ -5,6 +5,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { webhookRateLimiter } from '../middleware';
 import { handlePaymentWebhook } from '../services/payment.service';
+import { handlePaystackTransferWebhook, isPaystackTransferWebhook } from '../services/transfer.service';
 import { sendSuccess } from '../utils';
 import { AppError } from '../middleware/errorHandler';
 
@@ -20,8 +21,16 @@ router.post(
         return;
       }
 
-      const data = await handlePaymentWebhook('paystack', req.body, normalizeHeaders(req.headers));
-      sendSuccess(res, 200, data, 'Paystack webhook processed');
+      const normalizedHeaders = normalizeHeaders(req.headers);
+
+      if (isPaystackTransferWebhook(req.body)) {
+        const data = await handlePaystackTransferWebhook(req.body, normalizedHeaders);
+        sendSuccess(res, 200, data, 'Paystack transfer webhook processed');
+        return;
+      }
+
+      const data = await handlePaymentWebhook('paystack', req.body, normalizedHeaders);
+      sendSuccess(res, 200, data, 'Paystack payment webhook processed');
     } catch (error) {
       next(error);
     }

@@ -2,10 +2,20 @@
 // Tracking Service
 // ============================================
 
-import { OrderTrackingData, TrackingTimelineEvent } from '@yurdeals/shared';
+import { OrderSummary, OrderTrackingData, TrackingTimelineEvent } from '@yurdeals/shared';
 import { AppError } from '../middleware/errorHandler';
 import { orderRepository } from '../repositories/order.repository';
 import { shipmentEventRepository } from '../repositories/shipmentEvent.repository';
+import { PublicOrderTrackingQueryInput } from '../schemas/tracking.schema';
+
+interface PublicTrackedOrder {
+  order: OrderSummary;
+  tracking: OrderTrackingData;
+}
+
+interface PublicOrderTrackingLookupData {
+  orders: PublicTrackedOrder[];
+}
 
 export async function getOrderTracking(
   userId: string,
@@ -17,6 +27,37 @@ export async function getOrderTracking(
     throw new AppError('Order not found', 404, 'ORDER_NOT_FOUND');
   }
 
+  return buildTrackingData(order, orderId);
+}
+
+export async function getPublicOrderTracking(
+  query: PublicOrderTrackingQueryInput,
+): Promise<PublicOrderTrackingLookupData> {
+  const records = await orderRepository.findPublicTrackingOrdersByPhone(query.phone, query.orderNumber);
+
+  if (records.length === 0) {
+    throw new AppError('No recent orders were found for that phone number.', 404, 'ORDER_NOT_FOUND');
+  }
+
+  const orders = await Promise.all(
+    records.map(async (record) => ({
+      order: record.order,
+      tracking: await buildTrackingData(record.trackingBase, record.order.id),
+    })),
+  );
+
+  return { orders };
+}
+
+async function buildTrackingData(
+  order: {
+    status: string;
+    createdAt: Date;
+    payments: Array<{ status: string; paidAt: Date | null; updatedAt: Date }>;
+    shipments: Array<{ estimatedAt: Date | null }>;
+  },
+  orderId: string,
+): Promise<OrderTrackingData> {
   const shipmentEvents = await shipmentEventRepository.findEventsByOrderId(orderId);
   const timeline: TrackingTimelineEvent[] = [
     {

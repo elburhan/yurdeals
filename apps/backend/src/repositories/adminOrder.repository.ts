@@ -32,6 +32,15 @@ const ADMIN_ORDER_LIST_SELECT = {
       firstName: true,
       lastName: true,
       email: true,
+      phone: true,
+    },
+  },
+  shippingAddress: {
+    select: {
+      street: true,
+      city: true,
+      state: true,
+      country: true,
     },
   },
   items: {
@@ -273,6 +282,13 @@ function mapAdminOrderListItem(order: AdminOrderListRecord): AdminOrderListItem 
     currency: order.currency,
     customerName: `${order.user.firstName} ${order.user.lastName}`,
     customerEmail: order.user.email,
+    customerPhone: order.user.phone ?? null,
+    deliveryAddressShort: order.shippingAddress
+      ? [order.shippingAddress.street, order.shippingAddress.city]
+          .filter(Boolean)
+          .join(', ')
+      : null,
+    deliveryState: order.shippingAddress?.state ?? null,
     itemCount: order.items.reduce((total, item) => total + item.quantity, 0),
     paymentReference: order.paymentReference,
     createdAt: order.createdAt.toISOString(),

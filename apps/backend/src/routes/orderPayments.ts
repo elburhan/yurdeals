@@ -136,6 +136,8 @@ router.post(
       }
 
       const params = res.locals.validatedParams as PaymentStatusParamsInput;
+      // Manual verify stays available as a safe fallback even if the user returns
+      // before the webhook arrives. The backend still verifies directly with Paystack.
       const data = await verifyPayment(req.user.id, params.orderId, params.paymentId);
       sendSuccess(res, 200, data, 'Payment verified');
     } catch (error) {

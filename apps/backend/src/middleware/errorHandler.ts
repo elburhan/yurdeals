@@ -5,6 +5,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { isProduction } from '../config';
 import { logger } from '../utils';
+import { getCorrelationId } from './requestLogger';
 
 /**
  * Custom application error with HTTP status code.
@@ -47,17 +48,24 @@ export function notFoundHandler(req: Request, _res: Response, next: NextFunction
  */
 export function errorHandler(
   err: Error | AppError,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction,
 ): void {
   const statusCode = err instanceof AppError ? err.statusCode : 500;
   const code = err instanceof AppError ? err.code : 'INTERNAL_ERROR';
+  const correlationId = getCorrelationId(req);
 
   // Log all errors
-  logger.error(err.message, {
+  logger.error('request_failed', {
+    message: err.message,
     code,
     statusCode,
+    correlationId,
+    method: req.method,
+    path: req.originalUrl || req.url,
+    userId: req.user?.id ?? null,
+    ip: req.ip,
     stack: isDev() ? err.stack : undefined,
   });
 
@@ -66,6 +74,7 @@ export function errorHandler(
     error: {
       code,
       message: isProduction && statusCode === 500 ? 'An unexpected error occurred' : err.message,
+      ...(correlationId ? { correlationId } : {}),
       ...(err instanceof AppError && err.details ? { details: err.details } : {}),
       ...(isDev() && { stack: err.stack }),
     },

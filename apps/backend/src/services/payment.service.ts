@@ -31,6 +31,8 @@ export async function initiatePayment(
   const provider = input.provider as Extract<PaymentProvider, 'PAYSTACK' | 'FLUTTERWAVE'>;
   const gateway = getGateway(provider);
   const reference = createPaymentReference(provider);
+  // References are generated server-side and stored before initialize so every provider
+  // callback, webhook, and verify call can reconcile against a unique local payment record.
   const { order, payment } = await paymentRepository.createPendingPayment(
     userId,
     orderId,
@@ -81,6 +83,7 @@ export async function initiateGuestPayment(
   const provider = input.provider as Extract<PaymentProvider, 'PAYSTACK' | 'FLUTTERWAVE'>;
   const gateway = getGateway(provider);
   const reference = createPaymentReference(provider);
+  // Guest and authenticated flows both create and store the server-side reference first.
   const { order, payment } = await paymentRepository.createPendingGuestPayment(
     orderId,
     input.guest_access_token,
@@ -237,6 +240,73 @@ export async function verifyGuestPayment(
   return verifyPaymentRecord(payment);
 }
 
+export async function chargeAuthorization(
+  orderId: string,
+  amount: number,
+): Promise<PaymentStatusData> {
+  const gateway = gateways.PAYSTACK;
+
+  if (!(gateway instanceof PaystackGateway)) {
+    throw new AppError(
+      'Paystack authorization charges are not available',
+      500,
+      'PAYSTACK_GATEWAY_UNAVAILABLE',
+    );
+  }
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new AppError(
+      'Authorization charge amount must be greater than zero.',
+      422,
+      'INVALID_AUTHORIZATION_CHARGE_AMOUNT',
+    );
+  }
+
+  const reference = createPaymentReference(PaymentProvider.PAYSTACK);
+  const { order, payment, storedAuthorization } = await paymentRepository.prepareAuthorizationCharge(
+    orderId,
+    reference,
+    amount,
+  );
+
+  logger.warn('Starting internal Paystack authorization charge', {
+    orderId: order.id,
+    orderNumber: order.orderNumber,
+    paymentId: payment.id,
+    reference,
+    sourcePaymentId: storedAuthorization.paymentId,
+    amount,
+  });
+
+  // Internal/admin-only flow:
+  // 1. charge the saved authorization code from the backend
+  // 2. immediately verify the new reference with Paystack
+  // 3. only then persist the payment as successful
+  await gateway.chargeAuthorization({
+    authorizationCode: storedAuthorization.authorizationCode,
+    email: storedAuthorization.customerEmail ?? order.user.email,
+    amount,
+    currency: order.currency,
+    reference,
+  });
+
+  const verifiablePayment = await paymentRepository.findPaymentForCallbackVerification(
+    order.id,
+    payment.id,
+    reference,
+  );
+
+  if (!verifiablePayment) {
+    throw new AppError(
+      'Authorization charge payment could not be reloaded for verification.',
+      500,
+      'PAYMENT_NOT_FOUND',
+    );
+  }
+
+  return verifyPaymentRecord(verifiablePayment);
+}
+
 export async function handlePaymentWebhook(
   providerSlug: 'paystack' | 'flutterwave',
   rawBody: Buffer,
@@ -254,7 +324,11 @@ export async function handlePaymentWebhook(
 
   let event = gateway.parseWebhookEvent(rawBody, headers);
 
-  if (provider === PaymentProvider.FLUTTERWAVE) {
+  if (provider === PaymentProvider.PAYSTACK) {
+    // Paystack best practice: treat the signed webhook as a trigger to verify the reference,
+    // not as proof of payment success. We always call /transaction/verify before updating state.
+    event = await verifyPaystackEvent(event);
+  } else if (provider === PaymentProvider.FLUTTERWAVE) {
     event = await verifyFlutterwaveEvent(event);
   }
 
@@ -384,6 +458,37 @@ export async function handlePaymentWebhook(
   return { payment };
 }
 
+export async function verifyPaymentReturn(params: {
+  orderId?: string;
+  paymentId?: string;
+  reference?: string;
+}): Promise<void> {
+  const { orderId, paymentId, reference } = params;
+
+  if (!orderId || !paymentId || !reference) {
+    return;
+  }
+
+  const payment = await paymentRepository.findPaymentForCallbackVerification(
+    orderId,
+    paymentId,
+    reference,
+  );
+
+  if (!payment) {
+    logger.warn('Payment callback verification skipped because payment was not found', {
+      orderId,
+      paymentId,
+      reference,
+    });
+    return;
+  }
+
+  // Paystack recommends verifying after redirect/callback as well.
+  // This keeps the redirect path safe even if the webhook is delayed.
+  await verifyPaymentRecord(payment);
+}
+
 async function verifyPaymentRecord(
   payment: VerifiablePaymentRecord,
 ): Promise<PaymentStatusData> {
@@ -397,6 +502,8 @@ async function verifyPaymentRecord(
     return { payment: mapPayment(payment) };
   }
 
+  // Always verify against the provider reference first when present. This keeps Paystack
+  // reconciliation tied to the exact stored transaction reference instead of trusting UI state.
   const reference = payment.providerRef || payment.reference;
   logger.info('Verifying payment with provider', {
     paymentId: payment.id,
@@ -476,6 +583,16 @@ async function verifyFlutterwaveEvent(event: ProviderEvent): Promise<ProviderEve
   const gateway = gateways.FLUTTERWAVE;
 
   if (!(gateway instanceof FlutterwaveGateway)) {
+    return event;
+  }
+
+  return gateway.verifyTransaction(event.reference);
+}
+
+async function verifyPaystackEvent(event: ProviderEvent): Promise<ProviderEvent> {
+  const gateway = gateways.PAYSTACK;
+
+  if (!(gateway instanceof PaystackGateway)) {
     return event;
   }
 

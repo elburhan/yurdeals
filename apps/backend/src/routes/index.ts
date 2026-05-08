@@ -12,6 +12,7 @@ import orderPaymentsRouter from './orderPayments';
 import orderTrackingRouter from './orderTracking';
 import notificationsRouter from './notifications';
 import adminRouter from './admin';
+import adminTransfersRouter from './adminTransfers';
 import staffRouter from './staff';
 
 const router = Router();
@@ -29,6 +30,7 @@ router.use('/orders/:orderId/tracking', orderTrackingRouter);
 router.use('/orders', ordersRouter);
 router.use('/notifications', notificationsRouter);
 router.use('/admin', adminRouter);
+router.use('/admin/transfers', adminTransfersRouter);
 router.use('/staff', staffRouter);
 
 // Future route mounts:

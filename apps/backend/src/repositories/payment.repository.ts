@@ -19,6 +19,7 @@ const PAYMENT_SELECT = {
   providerTransactionId: true,
   authorizationUrl: true,
   accessCode: true,
+  authorizationCode: true,
   customerEmail: true,
   amount: true,
   amountCaptured: true,
@@ -80,6 +81,28 @@ type OrderForPayment = Prisma.OrderGetPayload<{ select: typeof ORDER_PAYMENT_SEL
 export type VerifiablePaymentRecord = Prisma.PaymentGetPayload<{
   select: typeof VERIFIABLE_PAYMENT_SELECT;
 }>;
+
+interface OrderForAuthorizationCharge {
+  id: string;
+  orderNumber: string;
+  userId: string;
+  status: OrderStatus;
+  total: Prisma.Decimal;
+  currency: string;
+  user: {
+    email: string;
+  };
+  payments: Array<{
+    id: string;
+    status: PaymentStatus;
+  }>;
+}
+
+interface StoredPaystackAuthorization {
+  paymentId: string;
+  authorizationCode: string;
+  customerEmail: string | null;
+}
 
 export interface CreatedPaymentResult {
   order: OrderForPayment;
@@ -225,6 +248,138 @@ export class PaymentRepository {
     return mapPayment(payment);
   }
 
+  async prepareAuthorizationCharge(
+    orderId: string,
+    reference: string,
+    amount: number,
+  ): Promise<{
+    order: OrderForAuthorizationCharge;
+    payment: PaymentSummary;
+    storedAuthorization: StoredPaystackAuthorization;
+  }> {
+    return prisma.$transaction(async (tx) => {
+      const order = await tx.order.findUnique({
+        where: { id: orderId },
+        select: {
+          id: true,
+          orderNumber: true,
+          userId: true,
+          status: true,
+          total: true,
+          currency: true,
+          user: {
+            select: {
+              email: true,
+            },
+          },
+          payments: {
+            where: {
+              status: { in: [PaymentStatus.SUCCESS, PaymentStatus.AUTHORIZED] },
+            },
+            select: {
+              id: true,
+              status: true,
+            },
+          },
+        },
+      });
+
+      if (!order) {
+        throw new AppError('Order not found', 404, 'ORDER_NOT_FOUND');
+      }
+
+      if (order.status !== OrderStatus.PENDING) {
+        throw new AppError(
+          'Only pending orders can be charged from a saved Paystack authorization.',
+          409,
+          'ORDER_NOT_PAYABLE',
+        );
+      }
+
+      if (order.currency !== 'NGN') {
+        throw new AppError(
+          'Saved Paystack authorization charges currently support NGN orders only.',
+          422,
+          'UNSUPPORTED_PAYMENT_CURRENCY',
+        );
+      }
+
+      if (order.payments.length > 0) {
+        throw new AppError('Order is not payable', 409, 'ORDER_NOT_PAYABLE');
+      }
+
+      if (!amountMatches(Number(order.total), amount)) {
+        throw new AppError(
+          'Authorization charges must match the outstanding order total exactly.',
+          422,
+          'INVALID_AUTHORIZATION_CHARGE_AMOUNT',
+        );
+      }
+
+      const storedAuthorization = await tx.payment.findFirst({
+        where: {
+          provider: PaymentProvider.PAYSTACK,
+          status: PaymentStatus.SUCCESS,
+          authorizationCode: { not: null },
+          order: {
+            userId: order.userId,
+          },
+        },
+        orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
+        select: {
+          id: true,
+          authorizationCode: true,
+          customerEmail: true,
+        },
+      });
+
+      if (!storedAuthorization?.authorizationCode) {
+        throw new AppError(
+          'No reusable Paystack authorization was found for this customer.',
+          404,
+          'PAYSTACK_AUTHORIZATION_NOT_FOUND',
+        );
+      }
+
+      const payment = await tx.payment.create({
+        data: {
+          orderId: order.id,
+          provider: PaymentProvider.PAYSTACK,
+          reference,
+          providerRef: reference,
+          customerEmail: storedAuthorization.customerEmail ?? order.user.email,
+          amount: order.total,
+          currency: order.currency,
+          status: PaymentStatus.PENDING,
+          metadata: {
+            orderId: order.id,
+            orderNumber: order.orderNumber,
+            chargeType: 'AUTHORIZATION',
+            sourcePaymentId: storedAuthorization.id,
+          },
+        },
+        select: PAYMENT_SELECT,
+      });
+
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          paymentReference: reference,
+        },
+      });
+
+      return {
+        order,
+        payment: mapPayment(payment),
+        storedAuthorization: {
+          paymentId: storedAuthorization.id,
+          authorizationCode: storedAuthorization.authorizationCode,
+          customerEmail: storedAuthorization.customerEmail,
+        },
+      };
+    });
+  }
+
   async findOwnedPayment(
     userId: string,
     orderId: string,
@@ -288,6 +443,21 @@ export class PaymentRepository {
         order: {
           notes: { contains: createGuestTokenTag(guestAccessToken) },
         },
+      },
+      select: VERIFIABLE_PAYMENT_SELECT,
+    });
+  }
+
+  async findPaymentForCallbackVerification(
+    orderId: string,
+    paymentId: string,
+    reference: string,
+  ): Promise<VerifiablePaymentRecord | null> {
+    return prisma.payment.findFirst({
+      where: {
+        id: paymentId,
+        orderId,
+        OR: [{ reference }, { providerRef: reference }],
       },
       select: VERIFIABLE_PAYMENT_SELECT,
     });
@@ -389,6 +559,7 @@ export class PaymentRepository {
             paidAt,
             verifiedAt: new Date(),
             providerTransactionId: event.providerTransactionId ?? payment.providerTransactionId,
+            authorizationCode: event.authorizationCode ?? payment.authorizationCode,
             channel: event.channel ?? payment.channel,
             gatewayResponse: stringifyPayload(event.raw),
             amountCaptured:

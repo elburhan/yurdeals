@@ -19,6 +19,10 @@ import {
   OrderQueryInput,
 } from '../schemas/order.schema';
 import {
+  publicOrderTrackingQuerySchema,
+  PublicOrderTrackingQueryInput,
+} from '../schemas/tracking.schema';
+import {
   cancelUserOrder,
   checkoutOrder,
   createOrderFromCart,
@@ -28,6 +32,7 @@ import {
   markGuestOrderWhatsappCheckout,
   markOrderWhatsappCheckout,
 } from '../services/order.service';
+import { getPublicOrderTracking } from '../services/tracking.service';
 
 const router = Router();
 
@@ -61,6 +66,20 @@ router.post(
         userAgent: req.headers['user-agent'],
       });
       sendSuccess(res, 200, data, 'Guest order marked for WhatsApp checkout');
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.get(
+  '/track',
+  validateQuery(publicOrderTrackingQuerySchema),
+  async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const query = res.locals.validatedQuery as PublicOrderTrackingQueryInput;
+      const data = await getPublicOrderTracking(query);
+      sendSuccess(res, 200, data, 'Order tracking retrieved');
     } catch (error) {
       next(error);
     }
