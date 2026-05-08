@@ -14,9 +14,9 @@ SELECT setval(
         FROM "orders"
         WHERE "order_number" ~ '^YD[0-9]+$'
       ),
-      1000
+      1001
     ),
-    1000
+    1001
   ),
   true
 );

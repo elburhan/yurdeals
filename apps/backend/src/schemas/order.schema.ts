@@ -19,7 +19,12 @@ export const createGuestOrderSchema = z.object({
   guest: z.object({
     full_name: z.string().trim().min(2).max(200),
     phone: z.string().trim().min(7).max(20),
-    email: z.string().trim().email().max(255).optional().or(z.literal('').transform(() => undefined)),
+    email: z
+      .string({ required_error: 'Email is required' })
+      .trim()
+      .min(1, 'Email is required')
+      .email('Enter a valid email address')
+      .max(255),
     state: z.string().trim().min(2).max(80),
     city: z.string().trim().min(2).max(80),
     area: z.string().trim().min(2).max(120),

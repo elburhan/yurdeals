@@ -920,8 +920,10 @@ function createInternalGuestEmail(): string {
 }
 
 async function getNextOrderNumber(tx: Prisma.TransactionClient): Promise<string> {
+  // Order numbers are generated from a dedicated Postgres sequence so they stay
+  // human-readable and concurrency-safe: YD1001, YD1002, ...
   const [result] = await tx.$queryRaw<Array<{ orderNumber: string }>>`
-    SELECT CONCAT('YD', nextval('order_number_seq')::text) AS "orderNumber"
+    SELECT CONCAT('YD', nextval('public.order_number_seq')::text) AS "orderNumber"
   `;
 
   if (!result?.orderNumber) {
