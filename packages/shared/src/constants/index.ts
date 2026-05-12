@@ -1,8 +1,3 @@
-// ============================================
-// Shared Constants — YurDeals
-// ============================================
-
-/** Supported user roles */
 export const UserRole = {
   CUSTOMER: 'CUSTOMER',
   STAFF: 'STAFF',
@@ -11,34 +6,41 @@ export const UserRole = {
 
 export type UserRoleType = (typeof UserRole)[keyof typeof UserRole];
 
-/** Order status lifecycle */
 export const OrderStatus = {
   PENDING: 'PENDING',
-  CONFIRMED: 'CONFIRMED',
+  PAID: 'PAID',
   PROCESSING: 'PROCESSING',
+  INSPECTION_PENDING: 'INSPECTION_PENDING',
+  INSPECTION_PASSED: 'INSPECTION_PASSED',
   SHIPPED: 'SHIPPED',
   IN_TRANSIT: 'IN_TRANSIT',
-  CUSTOMS: 'CUSTOMS',
-  OUT_FOR_DELIVERY: 'OUT_FOR_DELIVERY',
   DELIVERED: 'DELIVERED',
   CANCELLED: 'CANCELLED',
-  REFUNDED: 'REFUNDED',
 } as const;
 
 export type OrderStatusType = (typeof OrderStatus)[keyof typeof OrderStatus];
 
-/** Payment status */
+export const InspectionStatus = {
+  NOT_REQUIRED: 'NOT_REQUIRED',
+  PENDING: 'PENDING',
+  IN_PROGRESS: 'IN_PROGRESS',
+  PASSED: 'PASSED',
+  FAILED: 'FAILED',
+} as const;
+
+export type InspectionStatusType = (typeof InspectionStatus)[keyof typeof InspectionStatus];
+
 export const PaymentStatus = {
   PENDING: 'PENDING',
-  PROCESSING: 'PROCESSING',
+  AUTHORIZED: 'AUTHORIZED',
   SUCCESS: 'SUCCESS',
   FAILED: 'FAILED',
+  ABANDONED: 'ABANDONED',
   REFUNDED: 'REFUNDED',
 } as const;
 
 export type PaymentStatusType = (typeof PaymentStatus)[keyof typeof PaymentStatus];
 
-/** Payment provider */
 export const PaymentProvider = {
   PAYSTACK: 'PAYSTACK',
   FLUTTERWAVE: 'FLUTTERWAVE',
@@ -47,7 +49,6 @@ export const PaymentProvider = {
 
 export type PaymentProviderType = (typeof PaymentProvider)[keyof typeof PaymentProvider];
 
-/** Shipment status */
 export const ShipmentStatus = {
   PENDING: 'PENDING',
   PICKED_UP: 'PICKED_UP',
@@ -61,7 +62,6 @@ export const ShipmentStatus = {
 
 export type ShipmentStatusType = (typeof ShipmentStatus)[keyof typeof ShipmentStatus];
 
-/** Preorder campaign status */
 export const CampaignStatus = {
   DRAFT: 'DRAFT',
   ACTIVE: 'ACTIVE',
@@ -73,15 +73,32 @@ export const CampaignStatus = {
 
 export type CampaignStatusType = (typeof CampaignStatus)[keyof typeof CampaignStatus];
 
-/** Product stock type */
-export const StockType = {
-  LOCAL: 'LOCAL',
+export const ProductStockType = {
+  IN_STOCK: 'IN_STOCK',
   PREORDER: 'PREORDER',
 } as const;
 
-export type StockTypeType = (typeof StockType)[keyof typeof StockType];
+export type ProductStockTypeType =
+  (typeof ProductStockType)[keyof typeof ProductStockType];
 
-/** Standard HTTP status codes used */
+export const ProductApprovalStatus = {
+  PENDING_REVIEW: 'PENDING_REVIEW',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+  ARCHIVED: 'ARCHIVED',
+} as const;
+
+export type ProductApprovalStatusType =
+  (typeof ProductApprovalStatus)[keyof typeof ProductApprovalStatus];
+
+export const BlogPostStatus = {
+  DRAFT: 'DRAFT',
+  PUBLISHED: 'PUBLISHED',
+  ARCHIVED: 'ARCHIVED',
+} as const;
+
+export type BlogPostStatusType = (typeof BlogPostStatus)[keyof typeof BlogPostStatus];
+
 export const HttpStatus = {
   OK: 200,
   CREATED: 201,

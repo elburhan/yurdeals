@@ -6,6 +6,7 @@ import { initiateGuestPayment, initiatePayment } from '../lib/paymentApi';
 import { markGuestWhatsappCheckout, markWhatsappCheckout } from '../lib/orderApi';
 import { buildWhatsappCheckoutUrl } from '../lib/whatsappCheckout';
 import { useToast } from '../context/ToastContext';
+import { saveGuestPaymentSession } from '../lib/guestPaymentSession';
 
 interface PaymentPanelProps {
   order: OrderSummary;
@@ -35,6 +36,11 @@ export function PaymentPanel({ order, guestAccessToken, isGuestCheckout = false 
           return;
         }
         response = await initiateGuestPayment(order.id, guestAccessToken);
+        saveGuestPaymentSession({
+          orderId: order.id,
+          paymentId: response.data.payment.id,
+          guestAccessToken,
+        });
       } else {
         response = await initiatePayment(order.id);
       }
@@ -79,7 +85,7 @@ export function PaymentPanel({ order, guestAccessToken, isGuestCheckout = false 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-xl font-bold text-primary-950">Payment</h2>
         <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-primary-700">
-          Paystack
+          Secure payment
         </span>
       </div>
       <p className="mt-1 text-sm text-primary-800">
@@ -87,7 +93,9 @@ export function PaymentPanel({ order, guestAccessToken, isGuestCheckout = false 
         {formatPrice(order.total, order.currency)}
       </p>
       <div className="mt-4 rounded-lg bg-white/80 p-3 text-sm leading-6 text-primary-900">
-        <p>Secure online payments via Paystack.</p>
+        <p>Secure online payment for your order.</p>
+        <p>We'll hold these items for 30 minutes while you complete payment.</p>
+        <p>If payment takes longer, retry payment and we'll check availability again.</p>
         <p>Your payment is safe. We only release funds to the supplier after quality inspection in China.</p>
         <p>100% Nigerian support via WhatsApp.</p>
       </div>
@@ -107,7 +115,7 @@ export function PaymentPanel({ order, guestAccessToken, isGuestCheckout = false 
         onClick={() => void handlePay()}
         className="mt-4 min-h-[52px] w-full rounded-full bg-primary-500 px-5 py-3 text-base font-semibold text-white shadow-sm transition hover:bg-primary-600 active:bg-primary-700 disabled:cursor-not-allowed disabled:bg-surface-300"
       >
-        {isStartingPayment ? 'Redirecting...' : 'Pay online'}
+        {isStartingPayment ? 'Redirecting securely...' : 'Pay online'}
       </button>
 
       <div className="mt-4 rounded-lg border border-green-200 bg-white p-4">

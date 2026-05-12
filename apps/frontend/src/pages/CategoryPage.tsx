@@ -161,7 +161,7 @@ export default function CategoryPage() {
             {isAllProductsPage ? 'All Products' : selectedCategory?.name ?? 'Products'}
           </h1>
           <p className="max-w-2xl text-sm leading-6 text-surface-500">
-            Browse preorder and local product picks with clear pricing, Paystack checkout, and
+            Browse preorder and local product picks with clear pricing, secure online payment, and
             WhatsApp support.
           </p>
           <div className="grid gap-3 sm:grid-cols-[1fr_auto]">

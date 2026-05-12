@@ -93,10 +93,14 @@ app.get('/payment-return', async (req, res, next) => {
       reference: typeof req.query.reference === 'string' ? req.query.reference : undefined,
     });
 
-    const frontendOrigin = allowedOrigins[0] || 'http://localhost:5173';
-    const redirectUrl = new URL('/payment-return', frontendOrigin);
+    const redirectUrl = new URL('/payment-return', env.FRONTEND_URL);
+    const secretReturnParams = new Set(['guestAccessToken']);
 
     for (const [key, value] of Object.entries(req.query)) {
+      if (secretReturnParams.has(key)) {
+        continue;
+      }
+
       if (typeof value === 'string') {
         redirectUrl.searchParams.set(key, value);
       } else if (Array.isArray(value)) {

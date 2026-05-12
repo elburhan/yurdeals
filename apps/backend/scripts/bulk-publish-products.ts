@@ -19,7 +19,7 @@ async function main() {
   const before = await prisma.product.count({ where: targetWhere });
 
   if (before === 0) {
-    console.log('No products need publishing or approval.');
+    process.stdout.write('No products need publishing or approval.\n');
     return;
   }
 
@@ -48,7 +48,7 @@ async function main() {
     },
   });
 
-  console.log(
+  process.stdout.write(
     JSON.stringify(
       {
         updatedProducts: result.count,
@@ -58,13 +58,13 @@ async function main() {
       },
       null,
       2,
-    ),
+    ) + '\n',
   );
 }
 
 main()
   .catch((error) => {
-    console.error(error);
+    process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
     process.exit(1);
   })
   .finally(async () => {

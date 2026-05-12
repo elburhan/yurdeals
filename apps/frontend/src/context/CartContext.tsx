@@ -206,7 +206,7 @@ function addGuestCartItem(
     throw new Error('Variant not found or inactive');
   }
 
-  if (product.stockType === 'LOCAL' && product.variants.length > 0 && !selectedVariant) {
+  if (product.stockType === 'IN_STOCK' && product.variants.length > 0 && !selectedVariant) {
     throw new Error('Select a product variant before adding to cart');
   }
 

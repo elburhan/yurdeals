@@ -66,7 +66,7 @@ export default function ProductDetailPage() {
   async function handleAddToCart(): Promise<boolean> {
     if (!product) return false;
 
-    if (product.stockType === 'LOCAL' && product.variants.length > 0 && !selectedVariantId) {
+    if (product.stockType === 'IN_STOCK' && product.variants.length > 0 && !selectedVariantId) {
       setCartMessage('Select a variant before adding this product.');
       showToast('Select a variant before adding this product.', 'error');
       return false;
@@ -117,6 +117,9 @@ export default function ProductDetailPage() {
   const preorderPrice = product
     ? formatPrice(selectedVariant?.price ?? product.basePrice, product.currency)
     : '';
+  const arrivalLabel = product ? formatArrivalLabel(product.estimatedArrivalAt) : '25-40 days';
+  const availabilityLabel = product ? getProductAvailabilityLabel(product, selectedVariant?.stock) : null;
+  const quantityMax = product ? getQuantityMax(product, selectedVariant?.stock) : 99;
 
   return (
     <main className="min-h-screen bg-surface-50 pb-56 lg:pb-0">
@@ -165,7 +168,7 @@ export default function ProductDetailPage() {
               <article className="space-y-5">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-bold text-emerald-700">
-                    Estimated Arrival: 25-40 days
+                    Estimated Arrival: {arrivalLabel}
                   </span>
                   <span className="rounded-full bg-primary-50 px-3 py-1 text-sm font-bold text-primary-700">
                     {product.stockType === 'PREORDER' ? 'Preorder' : 'Local stock'}
@@ -197,9 +200,11 @@ export default function ProductDetailPage() {
                   Factory Direct - We Inspect in China
                 </div>
 
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold leading-6 text-amber-800 shadow-sm">
-                  Limited preorder slots at this price. Only 12 left before prices rise after arrival in Nigeria.
-                </div>
+                {availabilityLabel && (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold leading-6 text-amber-800 shadow-sm">
+                    {availabilityLabel}
+                  </div>
+                )}
 
                 <p className="text-base leading-7 text-surface-600">{product.description}</p>
                 <TrustBanner variant={product.stockType === 'PREORDER' ? 'delivery' : 'checkout'} />
@@ -249,7 +254,7 @@ export default function ProductDetailPage() {
                     </div>
                     <QuantityStepper
                       value={quantity}
-                      max={selectedVariant?.stock ?? 99}
+                      max={quantityMax}
                       onChange={setQuantity}
                     />
                   </div>
@@ -314,6 +319,7 @@ export default function ProductDetailPage() {
 
             <StickyPreorderBar
               price={preorderPrice}
+              arrivalLabel={arrivalLabel}
               isAdding={isAdding}
               onPreorder={() => void handlePreorderNow()}
             />
@@ -322,6 +328,57 @@ export default function ProductDetailPage() {
       </section>
     </main>
   );
+}
+
+function formatArrivalLabel(estimatedArrivalAt: string | null): string {
+  if (!estimatedArrivalAt) {
+    return '25-40 days';
+  }
+
+  return new Intl.DateTimeFormat('en-NG', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date(estimatedArrivalAt));
+}
+
+function getProductAvailabilityLabel(
+  product: ProductDetail,
+  selectedVariantStock?: number,
+): string | null {
+  if (product.stockType === 'PREORDER') {
+    if (product.preorderSlotsRemaining !== null) {
+      return `${product.preorderSlotsRemaining} preorder slot(s) left at this price. Prices may rise after arrival in Nigeria.`;
+    }
+
+    return 'Limited preorder slots at factory pricing. Prices may rise after arrival in Nigeria.';
+  }
+
+  if (selectedVariantStock !== undefined) {
+    return `${selectedVariantStock} unit(s) available for this variant.`;
+  }
+
+  if (product.inventoryQuantity !== null) {
+    return `${product.inventoryQuantity} unit(s) available in local stock.`;
+  }
+
+  return null;
+}
+
+function getQuantityMax(product: ProductDetail, selectedVariantStock?: number): number {
+  if (product.stockType === 'PREORDER' && product.preorderSlotsRemaining !== null) {
+    return Math.max(1, product.preorderSlotsRemaining);
+  }
+
+  if (selectedVariantStock !== undefined) {
+    return Math.max(1, selectedVariantStock);
+  }
+
+  if (product.inventoryQuantity !== null) {
+    return Math.max(1, product.inventoryQuantity);
+  }
+
+  return 99;
 }
 
 function InfoSection({ title, children }: { title: string; children: ReactNode }) {

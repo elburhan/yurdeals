@@ -15,6 +15,8 @@
     "build:shared": "npm run build -w packages/shared",
     "build": "npm run build:shared && npm run build:backend && npm run build:frontend",
     "lint": "eslint . --ext .ts,.tsx --max-warnings 0",
+    "test:e2e": "playwright test",
+    "test:e2e:auth": "playwright test tests/auth-otp.spec.ts",
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
     "format": "prettier --write \"**/*.{ts,tsx,json,css,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,json,css,md}\"",

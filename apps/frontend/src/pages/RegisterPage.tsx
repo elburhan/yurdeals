@@ -6,6 +6,8 @@ import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { ApiError } from '../lib/api';
+import { useToast } from '../context/ToastContext';
+import { createStoredVerificationContext, saveVerificationContext } from '../lib/verificationSession';
 
 interface FieldErrors {
   name?: string;
@@ -17,6 +19,7 @@ interface FieldErrors {
 
 export default function RegisterPage() {
   const { register, isAuthenticated } = useAuth();
+  const { showToast } = useToast();
   const navigate = useNavigate();
 
   const [name, setName] = useState('');
@@ -64,7 +67,9 @@ export default function RegisterPage() {
       errors.password = 'Include uppercase, lowercase, and a number';
     }
 
-    if (password !== confirmPassword) {
+    if (!confirmPassword) {
+      errors.confirmPassword = 'Please confirm your password';
+    } else if (password !== confirmPassword) {
       errors.confirmPassword = 'Passwords do not match';
     }
 
@@ -81,13 +86,27 @@ export default function RegisterPage() {
     setIsSubmitting(true);
 
     try {
-      await register({
+      const result = await register({
         email: email.trim() || undefined,
         password,
         name: name.trim(),
         phone: phone.trim(),
       });
-      navigate('/dashboard', { replace: true });
+
+      if (result.kind === 'authenticated') {
+        navigate('/dashboard', { replace: true });
+        return;
+      }
+
+      const storedVerification = createStoredVerificationContext(result.verification);
+      saveVerificationContext(storedVerification);
+      showToast('Account created. Enter the verification code we sent you.', 'success');
+      navigate('/verify-otp', {
+        replace: true,
+        state: {
+          verification: storedVerification,
+        },
+      });
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.details?.length) {
@@ -356,7 +375,7 @@ export default function RegisterPage() {
                 htmlFor="register-confirm-password"
                 className="block text-sm font-medium text-surface-300 mb-1.5"
               >
-                Confirm password
+                Confirm password <span className="text-red-300">*</span>
               </label>
               <input
                 id="register-confirm-password"
@@ -376,9 +395,16 @@ export default function RegisterPage() {
                   }`}
                 placeholder="Re-enter your password"
                 aria-invalid={fieldErrors.confirmPassword ? 'true' : 'false'}
+                aria-describedby={
+                  fieldErrors.confirmPassword ? 'register-confirm-password-error' : undefined
+                }
               />
               {fieldErrors.confirmPassword && (
-                <p className="mt-1 text-xs text-red-400" role="alert">
+                <p
+                  id="register-confirm-password-error"
+                  className="mt-1 text-xs text-red-400"
+                  role="alert"
+                >
                   {fieldErrors.confirmPassword}
                 </p>
               )}

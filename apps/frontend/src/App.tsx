@@ -10,6 +10,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 const HomePage = lazy(() => import('./pages/HomePage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const RegisterPage = lazy(() => import('./pages/RegisterPage'));
+const VerifyOtpPage = lazy(() => import('./pages/VerifyOtpPage'));
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const CategoryPage = lazy(() => import('./pages/CategoryPage'));
 const ProductDetailPage = lazy(() => import('./pages/ProductDetailPage'));
@@ -56,12 +57,14 @@ function App() {
                 <Route path="/checkout" element={<CheckoutPage />} />
                 <Route path="/payment-return" element={<PaymentReturnPage />} />
                 <Route path="/orders" element={<OrdersPage />} />
+                <Route path="/orders/track" element={<OrderTrackingPage />} />
                 <Route path="/orders/:orderId/tracking" element={<OrderTrackingPage />} />
                 <Route path="/account" element={<AccountPage />} />
                 <Route path="/admin" element={<AdminDashboardPage />} />
                 <Route path="/staff" element={<StaffDashboardPage />} />
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/register" element={<RegisterPage />} />
+                <Route path="/verify-otp" element={<VerifyOtpPage />} />
                 <Route
                   path="/dashboard"
                   element={

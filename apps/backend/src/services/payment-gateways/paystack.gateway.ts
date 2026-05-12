@@ -675,9 +675,6 @@ function withPaymentReturnParams(baseUrl: string, input: InitializePaymentInput)
   url.searchParams.set('orderId', input.orderId);
   url.searchParams.set('paymentId', input.paymentId);
   url.searchParams.set('reference', input.reference);
-  if (input.guestAccessToken) {
-    url.searchParams.set('guestAccessToken', input.guestAccessToken);
-  }
   return url.toString();
 }
 

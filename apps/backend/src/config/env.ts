@@ -19,6 +19,7 @@ interface EnvConfig {
   JWT_REFRESH_EXPIRES_IN_SECONDS: number;
   COOKIE_SECRET: string;
   CORS_ORIGIN: string;
+  FRONTEND_URL: string;
   RATE_LIMIT_WINDOW_MS: number;
   RATE_LIMIT_MAX_REQUESTS: number;
   AUTH_RATE_LIMIT_WINDOW_MS: number;
@@ -41,6 +42,10 @@ interface EnvConfig {
   CLOUDINARY_CLOUD_NAME: string;
   CLOUDINARY_API_KEY: string;
   CLOUDINARY_API_SECRET: string;
+  RESEND_API_KEY: string;
+  EMAIL_FROM: string;
+  EMAIL_REPLY_TO: string;
+  EMAIL_ENABLED: boolean;
 }
 
 function getEnvVar(key: string, fallback?: string): string {
@@ -59,6 +64,12 @@ function getEnvInt(key: string, fallback: number): number {
     throw new Error(`Environment variable ${key} must be a valid integer`);
   }
   return parsed;
+}
+
+function getEnvBoolean(key: string, fallback: boolean): boolean {
+  const value = process.env[key];
+  if (value === undefined) return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
 }
 
 function getRequiredRuntimeEnvVar(key: string): string {
@@ -85,6 +96,7 @@ export const env: EnvConfig = {
   JWT_REFRESH_EXPIRES_IN_SECONDS: getEnvInt('JWT_REFRESH_EXPIRES_IN_SECONDS', 604800),
   COOKIE_SECRET: getEnvVar('COOKIE_SECRET'),
   CORS_ORIGIN: getEnvVar('CORS_ORIGIN', 'http://localhost:5173'),
+  FRONTEND_URL: getEnvVar('FRONTEND_URL', 'http://localhost:5173'),
   RATE_LIMIT_WINDOW_MS: getEnvInt('RATE_LIMIT_WINDOW_MS', 60000),
   RATE_LIMIT_MAX_REQUESTS: getEnvInt('RATE_LIMIT_MAX_REQUESTS', 300),
   AUTH_RATE_LIMIT_WINDOW_MS: getEnvInt('AUTH_RATE_LIMIT_WINDOW_MS', 60000),
@@ -107,6 +119,10 @@ export const env: EnvConfig = {
   CLOUDINARY_CLOUD_NAME: getRequiredRuntimeEnvVar('CLOUDINARY_CLOUD_NAME'),
   CLOUDINARY_API_KEY: getRequiredRuntimeEnvVar('CLOUDINARY_API_KEY'),
   CLOUDINARY_API_SECRET: getRequiredRuntimeEnvVar('CLOUDINARY_API_SECRET'),
+  RESEND_API_KEY: getRequiredRuntimeEnvVar('RESEND_API_KEY'),
+  EMAIL_FROM: getEnvVar('EMAIL_FROM', 'YurDeals <orders@yurdeals.com>'),
+  EMAIL_REPLY_TO: getEnvVar('EMAIL_REPLY_TO', 'support@yurdeals.com'),
+  EMAIL_ENABLED: getEnvBoolean('EMAIL_ENABLED', false),
 };
 
 export const isProduction = env.NODE_ENV === 'production';

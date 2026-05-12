@@ -5,16 +5,18 @@
 import { OrderStatus, Prisma, ShipmentStatus } from '@prisma/client';
 import {
   AdminOrderDetailData,
+  AdminInventoryReservationSummary,
   AdminOrderListData,
   AdminOrderListItem,
+  AdminPaymentAttemptSummary,
+  AdminPaymentEventSummary,
   AdminOverviewData,
   OrderItemSummary,
-  PaymentSummary,
 } from '@yurdeals/shared';
 import { prisma } from '../config';
 import { AdminOrderQueryInput } from '../schemas/admin.schema';
 import { getPagination } from '../utils/pagination';
-import { GUEST_CUSTOMER_NOTE_TAG, WHATSAPP_CHECKOUT_NOTE_TAG, mapPayment } from './order.repository';
+import { GUEST_CUSTOMER_NOTE_TAG, WHATSAPP_CHECKOUT_NOTE_TAG } from './order.repository';
 
 const ADMIN_ORDER_LIST_SELECT = {
   id: true,
@@ -70,6 +72,7 @@ const ADMIN_ORDER_DETAIL_SELECT = {
   trackingNumber: true,
   trackingCarrier: true,
   trackingUrl: true,
+  notes: true,
   user: {
     select: {
       id: true,
@@ -133,8 +136,38 @@ const ADMIN_ORDER_DETAIL_SELECT = {
       verifiedAt: true,
       createdAt: true,
       updatedAt: true,
+      events: {
+        select: {
+          id: true,
+          paymentId: true,
+          provider: true,
+          eventType: true,
+          eventId: true,
+          status: true,
+          payload: true,
+          receivedAt: true,
+        },
+        orderBy: { receivedAt: 'desc' },
+      },
     },
     orderBy: { createdAt: 'desc' },
+  },
+  inventoryReservations: {
+    select: {
+      id: true,
+      orderItemId: true,
+      productId: true,
+      variantId: true,
+      stockType: true,
+      quantity: true,
+      status: true,
+      expiresAt: true,
+      confirmedAt: true,
+      releasedAt: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: { createdAt: 'asc' },
   },
 } satisfies Prisma.OrderSelect;
 
@@ -344,7 +377,13 @@ function mapAdminOrderDetail(order: AdminOrderDetailRecord): AdminOrderDetailDat
       email: order.user.email,
       phone: order.user.phone,
     },
-    payments: order.payments.map((payment) => mapPayment(payment) as PaymentSummary),
+    checkoutMethod: order.notes?.includes(WHATSAPP_CHECKOUT_NOTE_TAG) ? 'WHATSAPP' : 'ONLINE',
+    customerType: order.notes?.includes(GUEST_CUSTOMER_NOTE_TAG) ? 'GUEST' : 'REGISTERED',
+    payments: order.payments.map(mapAdminPaymentAttempt),
+    paymentEvents: order.payments
+      .flatMap((payment) => payment.events.map((event) => mapAdminPaymentEvent(payment, event)))
+      .sort((left, right) => right.receivedAt.localeCompare(left.receivedAt)),
+    reservations: order.inventoryReservations.map(mapAdminInventoryReservation),
   };
 }
 
@@ -360,6 +399,103 @@ function mapOrderItem(item: AdminOrderDetailRecord['items'][number]): OrderItemS
     stockTypeSnapshot: item.stockTypeSnapshot,
     inspectionRequired: item.inspectionRequired,
   };
+}
+
+function mapAdminPaymentAttempt(
+  payment: AdminOrderDetailRecord['payments'][number],
+): AdminPaymentAttemptSummary {
+  return {
+    id: payment.id,
+    provider: payment.provider,
+    status: payment.status,
+    amount: Number(payment.amount),
+    amountCaptured: payment.amountCaptured ? Number(payment.amountCaptured) : null,
+    amountRefunded: Number(payment.amountRefunded),
+    fees: payment.fees ? Number(payment.fees) : null,
+    currency: payment.currency,
+    reference: payment.reference,
+    providerRef: payment.providerRef,
+    providerTransactionId: payment.providerTransactionId,
+    customerEmail: payment.customerEmail,
+    channel: payment.channel,
+    gatewayResponse: summarizeText(payment.gatewayResponse),
+    hasAuthorizationUrl: Boolean(payment.authorizationUrl),
+    hasAccessCode: Boolean(payment.accessCode),
+    paidAt: payment.paidAt?.toISOString() ?? null,
+    verifiedAt: payment.verifiedAt?.toISOString() ?? null,
+    createdAt: payment.createdAt.toISOString(),
+    updatedAt: payment.updatedAt.toISOString(),
+  };
+}
+
+function mapAdminPaymentEvent(
+  payment: AdminOrderDetailRecord['payments'][number],
+  event: AdminOrderDetailRecord['payments'][number]['events'][number],
+): AdminPaymentEventSummary {
+  const payload = asRecord(event.payload);
+
+  return {
+    id: event.id,
+    paymentId: event.paymentId,
+    provider: event.provider,
+    eventType: event.eventType,
+    eventId: event.eventId,
+    providerReference: payment.reference,
+    providerRef: payment.providerRef,
+    status: event.status,
+    amountMatched: readBoolean(payload, 'amountMatched'),
+    currencyMatched: readBoolean(payload, 'currencyMatched'),
+    providerTransactionId: readString(payload, 'providerTransactionId'),
+    channel: readString(payload, 'channel'),
+    gatewayMessage: summarizeText(readString(payload, 'gatewayMessage')),
+    paidAt: readString(payload, 'paidAt'),
+    receivedAt: event.receivedAt.toISOString(),
+  };
+}
+
+function mapAdminInventoryReservation(
+  reservation: AdminOrderDetailRecord['inventoryReservations'][number],
+): AdminInventoryReservationSummary {
+  return {
+    id: reservation.id,
+    orderItemId: reservation.orderItemId,
+    productId: reservation.productId,
+    variantId: reservation.variantId,
+    stockType: reservation.stockType,
+    quantity: reservation.quantity,
+    status: reservation.status,
+    expiresAt: reservation.expiresAt.toISOString(),
+    confirmedAt: reservation.confirmedAt?.toISOString() ?? null,
+    releasedAt: reservation.releasedAt?.toISOString() ?? null,
+    createdAt: reservation.createdAt.toISOString(),
+    updatedAt: reservation.updatedAt.toISOString(),
+  };
+}
+
+function summarizeText(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  return value.length > 240 ? `${value.slice(0, 237)}...` : value;
+}
+
+function asRecord(value: Prisma.JsonValue): Record<string, Prisma.JsonValue> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return value as Record<string, Prisma.JsonValue>;
+}
+
+function readString(record: Record<string, Prisma.JsonValue>, key: string): string | null {
+  const value = record[key];
+  return typeof value === 'string' ? value : null;
+}
+
+function readBoolean(record: Record<string, Prisma.JsonValue>, key: string): boolean | null {
+  const value = record[key];
+  return typeof value === 'boolean' ? value : null;
 }
 
 export const adminOrderRepository = new AdminOrderRepository();

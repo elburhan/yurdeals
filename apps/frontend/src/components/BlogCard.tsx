@@ -1,9 +1,9 @@
 import { Link } from 'react-router-dom';
-import type { BlogPost } from '../data/blogPosts';
+import type { BlogPostListItem } from '@yurdeals/shared';
 import { SkeletonBlock } from './Skeleton';
 
 interface BlogCardProps {
-  post: BlogPost;
+  post: BlogPostListItem;
 }
 
 export function BlogCard({ post }: BlogCardProps): JSX.Element {
@@ -11,21 +11,29 @@ export function BlogCard({ post }: BlogCardProps): JSX.Element {
     <article className="group overflow-hidden rounded-2xl border border-surface-200 bg-white shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-md">
       <Link to={`/blog/${post.slug}`} className="block" aria-label={`Read ${post.title}`}>
         <div className="relative aspect-[4/3] overflow-hidden bg-surface-100">
-          <img
-            src={post.coverImage}
-            alt={post.title}
-            className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
-            loading="lazy"
-          />
+          {post.coverImage ? (
+            <img
+              src={post.coverImage}
+              alt={post.title}
+              className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+              loading="lazy"
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center bg-primary-50 text-sm font-bold text-primary-700">
+              YurDeals Guide
+            </div>
+          )}
           <span className="absolute left-3 top-3 rounded-full bg-primary-500 px-3 py-1 text-xs font-bold text-white shadow-sm">
-            {post.category}
+            {post.category?.name ?? 'Guide'}
           </span>
         </div>
         <div className="space-y-3 p-4">
           <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-surface-500">
-            <time dateTime={post.date}>{formatBlogDate(post.date)}</time>
+            <time dateTime={post.publishedAt ?? post.slug}>
+              {formatBlogDate(post.publishedAt)}
+            </time>
             <span aria-hidden="true">-</span>
-            <span>{post.readTime}</span>
+            <span>{formatReadTime(post.readingTimeMins)}</span>
           </div>
           <h3 className="font-display text-lg font-bold leading-snug text-surface-950">
             {post.title}
@@ -58,8 +66,18 @@ export function BlogCardSkeleton(): JSX.Element {
   );
 }
 
-function formatBlogDate(value: string): string {
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(
-    new Date(value),
-  );
+function formatBlogDate(value: string | null): string {
+  if (!value) {
+    return 'Recently published';
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date(value));
+}
+
+function formatReadTime(minutes: number | null): string {
+  return `${minutes ?? 1} min read`;
 }

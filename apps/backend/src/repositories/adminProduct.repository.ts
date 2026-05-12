@@ -25,13 +25,16 @@ const ADMIN_PRODUCT_SELECT = {
   isPublished: true,
   isFeatured: true,
   isActive: true,
+  inventoryQuantity: true,
   preorderSlotsTotal: true,
   preorderSlotsRemaining: true,
+  preorderStartsAt: true,
+  preorderEndsAt: true,
+  estimatedArrivalAt: true,
   trendingScore: true,
   createdAt: true,
   updatedAt: true,
   images: {
-    where: { isPrimary: true },
     select: {
       id: true,
       url: true,
@@ -40,7 +43,6 @@ const ADMIN_PRODUCT_SELECT = {
       isPrimary: true,
     },
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-    take: 1,
   },
   category: {
     select: {
@@ -50,6 +52,15 @@ const ADMIN_PRODUCT_SELECT = {
 } satisfies Prisma.ProductSelect;
 
 type AdminProductRecord = Prisma.ProductGetPayload<{ select: typeof ADMIN_PRODUCT_SELECT }>;
+
+interface NormalizedInventoryFields {
+  inventoryQuantity?: number;
+  preorderSlotsTotal?: number;
+  preorderSlotsRemaining?: number;
+  preorderStartsAt?: Date;
+  preorderEndsAt?: Date;
+  estimatedArrivalAt?: Date;
+}
 
 export interface AdminProductPageResult {
   products: AdminProductSummary[];
@@ -83,6 +94,8 @@ export class AdminProductRepository {
   }
 
   async createProduct(input: AdminCreateProductInput): Promise<AdminProductSummary> {
+    const imageUrls = normalizeProductImageUrls(input);
+    const inventoryFields = normalizeInventoryFields(input);
     const product = await prisma.product.create({
       data: {
         name: input.name,
@@ -99,15 +112,16 @@ export class AdminProductRepository {
         sku: input.sku ?? null,
         weight: input.weight ?? null,
         isFeatured: input.is_featured,
-        ...(input.image_url
+        ...inventoryFields,
+        ...(imageUrls
           ? {
               images: {
-                create: {
-                  url: input.image_url,
+                create: imageUrls.map((url, index) => ({
+                  url,
                   alt: input.name,
-                  sortOrder: 0,
-                  isPrimary: true,
-                },
+                  sortOrder: index,
+                  isPrimary: index === 0,
+                })),
               },
             }
           : {}),
@@ -122,63 +136,46 @@ export class AdminProductRepository {
     productId: string,
     input: AdminUpdateProductInput,
   ): Promise<AdminProductSummary> {
-    const product = await prisma.product.update({
-      where: { id: productId },
-      data: {
-        ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.slug !== undefined ? { slug: input.slug } : {}),
-        ...(input.description !== undefined ? { description: input.description } : {}),
-        ...(input.short_desc !== undefined ? { shortDesc: input.short_desc ?? null } : {}),
-        ...(input.category_id !== undefined ? { categoryId: input.category_id } : {}),
-        ...(input.base_price !== undefined ? { basePrice: input.base_price } : {}),
-        ...(input.currency !== undefined ? { currency: input.currency } : {}),
-        ...(input.stock_type !== undefined ? { stockType: input.stock_type } : {}),
-        ...(input.sku !== undefined ? { sku: input.sku ?? null } : {}),
-        ...(input.weight !== undefined ? { weight: input.weight ?? null } : {}),
-        ...(input.is_featured !== undefined ? { isFeatured: input.is_featured } : {}),
-        ...(input.is_active !== undefined ? { isActive: input.is_active } : {}),
-      },
-      select: ADMIN_PRODUCT_SELECT,
-    });
-
-    if (input.image_url) {
-      const imageUrl = input.image_url;
-      await prisma.$transaction(async (tx) => {
-        const primaryImage = await tx.productImage.findFirst({
-          where: { productId, isPrimary: true },
-          select: { id: true },
-          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-        });
-
-        if (primaryImage) {
-          await tx.productImage.update({
-            where: { id: primaryImage.id },
-            data: {
-              url: imageUrl,
-              alt: input.name ?? product.name,
-            },
-          });
-          return;
-        }
-
-        await tx.productImage.create({
-          data: {
-            productId,
-            url: imageUrl,
-            alt: input.name ?? product.name,
-            sortOrder: 0,
-            isPrimary: true,
-          },
-        });
+    const imageUrls = normalizeProductImageUrls(input);
+    const product = await prisma.$transaction(async (tx) => {
+      const updatedProduct = await tx.product.update({
+        where: { id: productId },
+        data: {
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.slug !== undefined ? { slug: input.slug } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          ...(input.short_desc !== undefined ? { shortDesc: input.short_desc ?? null } : {}),
+          ...(input.category_id !== undefined ? { categoryId: input.category_id } : {}),
+          ...(input.base_price !== undefined ? { basePrice: input.base_price } : {}),
+          ...(input.currency !== undefined ? { currency: input.currency } : {}),
+          ...(input.stock_type !== undefined ? { stockType: input.stock_type } : {}),
+          ...(input.sku !== undefined ? { sku: input.sku ?? null } : {}),
+          ...(input.weight !== undefined ? { weight: input.weight ?? null } : {}),
+          ...(input.is_featured !== undefined ? { isFeatured: input.is_featured } : {}),
+          ...(input.is_active !== undefined ? { isActive: input.is_active } : {}),
+          ...normalizeInventoryFields(input),
+        },
+        select: { id: true, name: true },
       });
 
-      const productWithImage = await prisma.product.findUniqueOrThrow({
+      if (imageUrls) {
+        await tx.productImage.deleteMany({ where: { productId } });
+        await tx.productImage.createMany({
+          data: imageUrls.map((url, index) => ({
+            productId,
+            url,
+            alt: input.name ?? updatedProduct.name,
+            sortOrder: index,
+            isPrimary: index === 0,
+          })),
+        });
+      }
+
+      return tx.product.findUniqueOrThrow({
         where: { id: productId },
         select: ADMIN_PRODUCT_SELECT,
       });
-
-      return mapAdminProduct(productWithImage);
-    }
+    });
 
     return mapAdminProduct(product);
   }
@@ -215,6 +212,8 @@ function createSlug(name: string): string {
 }
 
 function mapAdminProduct(product: AdminProductRecord): AdminProductSummary {
+  const primaryImage = product.images.find((image) => image.isPrimary) ?? product.images[0] ?? null;
+
   return {
     id: product.id,
     name: product.name,
@@ -229,13 +228,52 @@ function mapAdminProduct(product: AdminProductRecord): AdminProductSummary {
     isPublished: product.isPublished,
     isFeatured: product.isFeatured,
     isActive: product.isActive,
+    inventoryQuantity: product.inventoryQuantity,
     preorderSlotsTotal: product.preorderSlotsTotal,
     preorderSlotsRemaining: product.preorderSlotsRemaining,
+    preorderStartsAt: product.preorderStartsAt?.toISOString() ?? null,
+    preorderEndsAt: product.preorderEndsAt?.toISOString() ?? null,
+    estimatedArrivalAt: product.estimatedArrivalAt?.toISOString() ?? null,
     trendingScore: Number(product.trendingScore),
-    primaryImage: product.images[0] ?? null,
+    primaryImage,
+    images: product.images,
     createdAt: product.createdAt.toISOString(),
     updatedAt: product.updatedAt.toISOString(),
   };
+}
+
+function normalizeInventoryFields(
+  input: AdminCreateProductInput | AdminUpdateProductInput,
+): NormalizedInventoryFields {
+  const inventoryQuantity = input.inventory_quantity ?? input.inventoryQuantity;
+  const preorderSlotsTotal = input.preorder_slots_total ?? input.preorderSlotsTotal;
+  const preorderSlotsRemaining = input.preorder_slots_remaining ?? input.preorderSlotsRemaining;
+  const preorderStartsAt = input.preorder_starts_at ?? input.preorderStartsAt;
+  const preorderEndsAt = input.preorder_ends_at ?? input.preorderEndsAt;
+  const estimatedArrivalAt = input.estimated_arrival_at ?? input.estimatedArrivalAt;
+
+  return {
+    ...(inventoryQuantity !== undefined ? { inventoryQuantity } : {}),
+    ...(preorderSlotsTotal !== undefined ? { preorderSlotsTotal } : {}),
+    ...(preorderSlotsRemaining !== undefined ? { preorderSlotsRemaining } : {}),
+    ...(preorderStartsAt !== undefined ? { preorderStartsAt: new Date(preorderStartsAt) } : {}),
+    ...(preorderEndsAt !== undefined ? { preorderEndsAt: new Date(preorderEndsAt) } : {}),
+    ...(estimatedArrivalAt !== undefined ? { estimatedArrivalAt: new Date(estimatedArrivalAt) } : {}),
+  };
+}
+
+function normalizeProductImageUrls(
+  input: Pick<AdminCreateProductInput, 'image_url' | 'images'>,
+): string[] | undefined {
+  if (input.images && input.images.length > 0) {
+    return input.images;
+  }
+
+  if (input.image_url) {
+    return [input.image_url];
+  }
+
+  return undefined;
 }
 
 export const adminProductRepository = new AdminProductRepository();

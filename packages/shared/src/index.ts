@@ -4,3 +4,4 @@
 
 export * from './types/index.js';
 export * from './constants/index.js';
+export type { PublicOrderTrackingData } from './types/index.js';

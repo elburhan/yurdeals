@@ -33,6 +33,8 @@ const SAFE_USER_SELECT = {
   role: true,
   avatar: true,
   isVerified: true,
+  emailVerified: true,
+  phoneVerified: true,
   isActive: true,
   lastLoginAt: true,
   createdAt: true,

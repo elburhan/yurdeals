@@ -5,9 +5,9 @@ const trustItems = [
     detail: 'to Nigeria',
   },
   {
-    icon: 'PS',
-    label: 'Secured by Paystack',
-    detail: 'safe online checkout',
+    icon: 'SEC',
+    label: 'Secure online checkout',
+    detail: 'protected payment flow',
   },
   {
     icon: '25',

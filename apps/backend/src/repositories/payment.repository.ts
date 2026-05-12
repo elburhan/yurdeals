@@ -7,7 +7,14 @@ import { PaymentSummary } from '@yurdeals/shared';
 import { prisma } from '../config';
 import { AppError } from '../middleware/errorHandler';
 import { ProviderEvent } from '../services/payment-gateways/paymentGateway.types';
-import { createGuestTokenTag, mapPayment } from './order.repository';
+import { mapPayment } from './order.repository';
+import {
+  confirmOrderInventoryReservations,
+  releaseOrderInventoryReservations,
+  reserveOrderInventory,
+} from '../services/inventoryReservation.service';
+
+export const PENDING_PAYMENT_STALE_WINDOW_MS = 30 * 60 * 1000;
 
 const PAYMENT_SELECT = {
   id: true,
@@ -50,10 +57,9 @@ const ORDER_PAYMENT_SELECT = {
     },
   },
   payments: {
-    where: {
-      status: { in: [PaymentStatus.SUCCESS, PaymentStatus.AUTHORIZED] },
-    },
-    select: { id: true },
+    select: PAYMENT_SELECT,
+    orderBy: { createdAt: 'desc' },
+    take: 20,
   },
 } satisfies Prisma.OrderSelect;
 
@@ -78,6 +84,7 @@ const VERIFIABLE_PAYMENT_SELECT = {
 } satisfies Prisma.PaymentSelect;
 
 type OrderForPayment = Prisma.OrderGetPayload<{ select: typeof ORDER_PAYMENT_SELECT }>;
+type OrderPaymentRecord = OrderForPayment['payments'][number];
 export type VerifiablePaymentRecord = Prisma.PaymentGetPayload<{
   select: typeof VERIFIABLE_PAYMENT_SELECT;
 }>;
@@ -109,12 +116,21 @@ export interface CreatedPaymentResult {
   payment: PaymentSummary;
 }
 
+export interface PreparedPaymentAttemptResult extends CreatedPaymentResult {
+  resolution: 'REUSED_PENDING' | 'CREATED_NEW';
+}
+
 export interface PaymentEventContext {
   payment: PaymentSummary;
   order: {
     id: string;
     orderNumber: string;
     userId: string;
+    notes: string | null;
+    shippingAddress: {
+      firstName: string;
+      lastName: string;
+    } | null;
   };
 }
 
@@ -129,98 +145,37 @@ export interface ProcessWebhookResult {
 }
 
 export class PaymentRepository {
-  async createPendingPayment(
+  async prepareOwnedPaymentAttempt(
     userId: string,
     orderId: string,
     provider: Extract<PaymentProvider, 'PAYSTACK' | 'FLUTTERWAVE'>,
     reference: string,
-  ): Promise<CreatedPaymentResult> {
-    const order = await prisma.order.findFirst({
+  ): Promise<PreparedPaymentAttemptResult> {
+    return this.preparePaymentAttemptInternal({
       where: { id: orderId, userId },
-      select: ORDER_PAYMENT_SELECT,
-    });
-
-    if (!order) {
-      throw new AppError('Order not found', 404, 'ORDER_NOT_FOUND');
-    }
-
-    if (order.status !== OrderStatus.PENDING || order.payments.length > 0) {
-      throw new AppError('Order is not payable', 409, 'ORDER_NOT_PAYABLE');
-    }
-
-    const payment = await prisma.payment.create({
-      data: {
-        orderId: order.id,
-        provider,
-        reference,
-        providerRef: reference,
-        customerEmail: order.user.email,
-        amount: order.total,
-        currency: order.currency,
-        status: PaymentStatus.PENDING,
-        metadata: {
-          orderId: order.id,
-          orderNumber: order.orderNumber,
-        },
+      provider,
+      reference,
+      customerType: 'REGISTERED',
+      resolveCustomerEmail(order) {
+        return order.user.email;
       },
-      select: PAYMENT_SELECT,
     });
-
-    await prisma.order.update({
-      where: { id: order.id },
-      data: { paymentReference: reference },
-    });
-
-    return { order, payment: mapPayment(payment) };
   }
 
-  async createPendingGuestPayment(
+  async prepareGuestPaymentAttempt(
     orderId: string,
-    guestAccessToken: string,
     provider: Extract<PaymentProvider, 'PAYSTACK' | 'FLUTTERWAVE'>,
     reference: string,
-  ): Promise<CreatedPaymentResult> {
-    const order = await prisma.order.findFirst({
-      where: {
-        id: orderId,
-        notes: { contains: createGuestTokenTag(guestAccessToken) },
+  ): Promise<PreparedPaymentAttemptResult> {
+    return this.preparePaymentAttemptInternal({
+      where: { id: orderId },
+      provider,
+      reference,
+      customerType: 'GUEST',
+      resolveCustomerEmail(order) {
+        return extractGuestEmail(order.notes) ?? order.user.email;
       },
-      select: ORDER_PAYMENT_SELECT,
     });
-
-    if (!order) {
-      throw new AppError('Order not found', 404, 'ORDER_NOT_FOUND');
-    }
-
-    if (order.status !== OrderStatus.PENDING || order.payments.length > 0) {
-      throw new AppError('Order is not payable', 409, 'ORDER_NOT_PAYABLE');
-    }
-
-    const payment = await prisma.payment.create({
-      data: {
-        orderId: order.id,
-        provider,
-        reference,
-        providerRef: reference,
-        customerEmail: extractGuestEmail(order.notes) ?? order.user.email,
-        amount: order.total,
-        currency: order.currency,
-        status: PaymentStatus.PENDING,
-        metadata: {
-          orderId: order.id,
-          orderNumber: order.orderNumber,
-          customerType: 'GUEST',
-        },
-      },
-      select: PAYMENT_SELECT,
-    });
-
-    await prisma.order.update({
-      where: { id: order.id },
-      data: { paymentReference: reference },
-    });
-
-    return { order, payment: mapPayment(payment) };
   }
 
   async updatePaymentMetadata(
@@ -400,15 +355,11 @@ export class PaymentRepository {
   async findGuestPayment(
     orderId: string,
     paymentId: string,
-    guestAccessToken: string,
   ): Promise<PaymentSummary | null> {
     const payment = await prisma.payment.findFirst({
       where: {
         id: paymentId,
         orderId,
-        order: {
-          notes: { contains: createGuestTokenTag(guestAccessToken) },
-        },
       },
       select: PAYMENT_SELECT,
     });
@@ -434,15 +385,11 @@ export class PaymentRepository {
   async findGuestPaymentForVerification(
     orderId: string,
     paymentId: string,
-    guestAccessToken: string,
   ): Promise<VerifiablePaymentRecord | null> {
     return prisma.payment.findFirst({
       where: {
         id: paymentId,
         orderId,
-        order: {
-          notes: { contains: createGuestTokenTag(guestAccessToken) },
-        },
       },
       select: VERIFIABLE_PAYMENT_SELECT,
     });
@@ -552,8 +499,11 @@ export class PaymentRepository {
             ? parseEventPaidAt(event.paidAt) ?? payment.paidAt ?? new Date()
             : payment.paidAt;
 
-        const savedPayment = await tx.payment.update({
-          where: { id: payment.id },
+        const transition = await tx.payment.updateMany({
+          where: {
+            id: payment.id,
+            status: previousStatus,
+          },
           data: {
             status: nextStatus,
             paidAt,
@@ -567,10 +517,30 @@ export class PaymentRepository {
                 ? payment.amount
                 : payment.amountCaptured,
           },
+        });
+
+        const savedPayment = await tx.payment.findUniqueOrThrow({
+          where: { id: payment.id },
           select: PAYMENT_SELECT,
         });
 
+        if (transition.count === 0) {
+          return {
+            payment: mapPayment(savedPayment),
+            duplicate: false,
+            ignored: false,
+            mismatch: false,
+            statusChanged: false,
+            previousStatus,
+            eventId,
+          };
+        }
+
         if (nextStatus === PaymentStatus.SUCCESS) {
+          await confirmOrderInventoryReservations(tx, payment.order.id, {
+            paymentId: payment.id,
+            provider: event.provider,
+          });
           await tx.order.update({
             where: { id: payment.order.id },
             data: {
@@ -580,6 +550,13 @@ export class PaymentRepository {
             },
           });
         } else if (nextStatus === PaymentStatus.FAILED && payment.order.status === OrderStatus.PENDING) {
+          await releaseOrderInventoryReservations(tx, payment.order.id, {
+            reason: 'PAYMENT_FAILED',
+            payment: {
+              paymentId: payment.id,
+              provider: event.provider,
+            },
+          });
           await tx.order.update({
             where: { id: payment.order.id },
             data: {
@@ -629,6 +606,13 @@ export class PaymentRepository {
             id: true,
             orderNumber: true,
             userId: true,
+            notes: true,
+            shippingAddress: {
+              select: {
+                firstName: true,
+                lastName: true,
+              },
+            },
           },
         },
       },
@@ -642,6 +626,108 @@ export class PaymentRepository {
       payment: mapPayment(payment),
       order: payment.order,
     };
+  }
+
+  private async preparePaymentAttemptInternal(input: {
+    where: Prisma.OrderWhereInput;
+    provider: Extract<PaymentProvider, 'PAYSTACK' | 'FLUTTERWAVE'>;
+    reference: string;
+    customerType: 'REGISTERED' | 'GUEST';
+    resolveCustomerEmail: (order: OrderForPayment) => string | null;
+  }): Promise<PreparedPaymentAttemptResult> {
+    return prisma.$transaction(async (tx) => {
+      const order = await tx.order.findFirst({
+        where: input.where,
+        select: ORDER_PAYMENT_SELECT,
+      });
+
+      if (!order) {
+        throw new AppError('Order not found', 404, 'ORDER_NOT_FOUND');
+      }
+
+      assertOrderCanStartPayment(order);
+
+      const newestPendingPayment = order.payments.find(
+        (payment) => payment.status === PaymentStatus.PENDING,
+      );
+
+      if (newestPendingPayment) {
+        const pendingIsFresh = !isPaymentStale(newestPendingPayment);
+        const hasUsableAuthorizationUrl = hasReusablePendingAuthorization(newestPendingPayment);
+
+        if (pendingIsFresh && hasUsableAuthorizationUrl) {
+          if (newestPendingPayment.provider !== input.provider) {
+            throw new AppError(
+              'This order already has an active payment attempt. Please complete that payment or wait for it to expire.',
+              409,
+              'ACTIVE_PAYMENT_EXISTS',
+            );
+          }
+
+          await reserveOrderInventory(
+            tx,
+            order.id,
+            {
+              paymentId: newestPendingPayment.id,
+              provider: newestPendingPayment.provider,
+            },
+            PENDING_PAYMENT_STALE_WINDOW_MS,
+          );
+
+          return {
+            order,
+            payment: mapPayment(newestPendingPayment),
+            resolution: 'REUSED_PENDING',
+          };
+        }
+
+        await abandonPendingPayments(tx, order.id, order.payments, {
+          reason: pendingIsFresh
+            ? 'PENDING_PAYMENT_MISSING_AUTHORIZATION_URL'
+            : `PENDING_PAYMENT_STALE_${Math.floor(PENDING_PAYMENT_STALE_WINDOW_MS / 60000)}M`,
+        });
+      }
+
+      const payment = await tx.payment.create({
+        data: {
+          orderId: order.id,
+          provider: input.provider,
+          reference: input.reference,
+          providerRef: input.reference,
+          customerEmail: input.resolveCustomerEmail(order),
+          amount: order.total,
+          currency: order.currency,
+          status: PaymentStatus.PENDING,
+          metadata: {
+            orderId: order.id,
+            orderNumber: order.orderNumber,
+            customerType: input.customerType,
+          },
+        },
+        select: PAYMENT_SELECT,
+      });
+
+      await tx.order.update({
+        where: { id: order.id },
+        data: { paymentReference: input.reference },
+      });
+
+      await reserveOrderInventory(
+        tx,
+        order.id,
+        {
+          paymentId: payment.id,
+          provider: payment.provider,
+        },
+        PENDING_PAYMENT_STALE_WINDOW_MS,
+      );
+
+      return {
+        order,
+        payment: mapPayment(payment),
+        resolution: 'CREATED_NEW',
+      };
+    });
   }
 }
 
@@ -661,12 +747,108 @@ function isFinalPaymentStatus(status: PaymentStatus): boolean {
   return (
     status === PaymentStatus.SUCCESS ||
     status === PaymentStatus.FAILED ||
+    status === PaymentStatus.ABANDONED ||
     status === PaymentStatus.REFUNDED
   );
 }
 
+function assertOrderCanStartPayment(order: OrderForPayment): void {
+  if (order.status === OrderStatus.CANCELLED) {
+    throw new AppError(
+      'Cancelled orders cannot start a new payment.',
+      409,
+      'ORDER_NOT_PAYABLE',
+    );
+  }
+
+  if (order.status !== OrderStatus.PENDING) {
+    throw new AppError(
+      'This order has already moved beyond checkout and cannot start a new payment.',
+      409,
+      'ORDER_NOT_PAYABLE',
+    );
+  }
+
+  if (
+    order.payments.some(
+      (payment) =>
+        payment.status === PaymentStatus.SUCCESS || payment.status === PaymentStatus.AUTHORIZED,
+    )
+  ) {
+    throw new AppError(
+      'This order already has a confirmed payment and cannot start another payment.',
+      409,
+      'ORDER_ALREADY_PAID',
+    );
+  }
+}
+
 function amountMatches(expected: number, received: number): boolean {
   return Math.abs(expected - received) < 0.01;
+}
+
+function hasReusablePendingAuthorization(
+  payment: Pick<OrderPaymentRecord, 'authorizationUrl'>,
+): boolean {
+  return typeof payment.authorizationUrl === 'string' && payment.authorizationUrl.length > 0;
+}
+
+function isPaymentStale(
+  payment: Pick<OrderPaymentRecord, 'updatedAt'>,
+): boolean {
+  return Date.now() - payment.updatedAt.getTime() > PENDING_PAYMENT_STALE_WINDOW_MS;
+}
+
+async function abandonPendingPayments(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+  payments: Array<Pick<OrderPaymentRecord, 'id' | 'status' | 'reference' | 'providerRef' | 'provider'>>,
+  input: { reason: string },
+): Promise<void> {
+  const pendingPayments = payments.filter((payment) => payment.status === PaymentStatus.PENDING);
+
+  if (pendingPayments.length === 0) {
+    return;
+  }
+
+  await tx.payment.updateMany({
+    where: {
+      id: { in: pendingPayments.map((payment) => payment.id) },
+      orderId,
+      status: PaymentStatus.PENDING,
+    },
+    data: {
+      status: PaymentStatus.ABANDONED,
+      verifiedAt: new Date(),
+    },
+  });
+
+  const auditPayment = pendingPayments[0];
+  if (auditPayment) {
+    await releaseOrderInventoryReservations(tx, orderId, {
+      reason: input.reason,
+      payment: {
+        paymentId: auditPayment.id,
+        provider: auditPayment.provider,
+      },
+    });
+  }
+
+  for (const payment of pendingPayments) {
+    await tx.paymentEvent.create({
+      data: {
+        paymentId: payment.id,
+        provider: payment.provider,
+        eventType: 'payment.retry.abandoned_pending',
+        status: PaymentStatus.ABANDONED,
+        payload: {
+          reason: input.reason,
+          reference: payment.reference,
+          providerRef: payment.providerRef,
+        },
+      },
+    });
+  }
 }
 
 function extractGuestEmail(notes: string | null): string | null {

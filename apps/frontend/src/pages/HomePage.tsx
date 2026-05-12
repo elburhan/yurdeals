@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { HomeCatalogData } from '@yurdeals/shared';
+import type { BlogPostListItem, HomeCatalogData } from '@yurdeals/shared';
+import { fetchFeaturedBlogPosts } from '../lib/blogApi';
 import { getHomeCatalog } from '../lib/catalogApi';
 import { BlogList } from '../components/BlogList';
 import { CategoryChip } from '../components/CategoryChip';
@@ -11,7 +12,6 @@ import { SocialProof } from '../components/SocialProof';
 import { TrustBanner } from '../components/TrustBanner';
 import { HERO_BACKGROUND_IMAGES } from '../config/heroBackgrounds';
 import { businessIdeas, type BusinessIdea } from '../data/businessIdeas';
-import { blogPosts } from '../data/blogPosts';
 
 const SHOW_BLOG = false;
 
@@ -51,7 +51,9 @@ const heroValueBadges = [
 
 export default function HomePage() {
   const [catalog, setCatalog] = useState<HomeCatalogData | null>(null);
+  const [featuredBlogPosts, setFeaturedBlogPosts] = useState<BlogPostListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isBlogLoading, setIsBlogLoading] = useState(true);
   const [error, setError] = useState('');
   const [currentHeroIndex, setCurrentHeroIndex] = useState(0);
 
@@ -77,6 +79,35 @@ export default function HomePage() {
       .finally(() => {
         if (isMounted) {
           setIsLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    fetchFeaturedBlogPosts(3)
+      .then((response) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setFeaturedBlogPosts(response.data.posts);
+      })
+      .catch(() => {
+        if (!isMounted) {
+          return;
+        }
+
+        setFeaturedBlogPosts([]);
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsBlogLoading(false);
         }
       });
 
@@ -158,9 +189,9 @@ export default function HomePage() {
             </div>
             <div className="hidden flex-wrap items-center gap-2 text-sm text-surface-200 sm:flex">
               <span className="rounded-full bg-white px-3 py-1 font-bold text-primary-700">
-                Paystack
+                Secure payment
               </span>
-              <span>Secure online payments via Paystack. Over 100 happy customers.</span>
+              <span>Secure online payment. Over 100 happy customers.</span>
             </div>
           </div>
         </div>
@@ -245,7 +276,12 @@ export default function HomePage() {
               View all guides
             </Link>
           </div>
-          <BlogList posts={blogPosts} limit={3} />
+          <BlogList posts={featuredBlogPosts} limit={3} isLoading={isBlogLoading} />
+          {!isBlogLoading && featuredBlogPosts.length === 0 ? (
+            <p className="mt-4 text-sm leading-6 text-surface-500">
+              Fresh guides will appear here as new articles are published.
+            </p>
+          ) : null}
         </section>
 
         <SocialProof

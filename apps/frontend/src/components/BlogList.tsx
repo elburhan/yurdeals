@@ -1,8 +1,8 @@
-import type { BlogPost } from '../data/blogPosts';
+import type { BlogPostListItem } from '@yurdeals/shared';
 import { BlogCard, BlogCardSkeleton } from './BlogCard';
 
 interface BlogListProps {
-  posts: BlogPost[];
+  posts: BlogPostListItem[];
   isLoading?: boolean;
   limit?: number;
   className?: string;

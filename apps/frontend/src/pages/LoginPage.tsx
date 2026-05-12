@@ -12,6 +12,11 @@ interface FieldErrors {
   password?: string;
 }
 
+interface LoginLocationState {
+  from?: { pathname: string };
+  verified?: boolean;
+}
+
 export default function LoginPage() {
   const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
@@ -24,7 +29,9 @@ export default function LoginPage() {
   const [globalError, setGlobalError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const from = (location.state as { from?: { pathname: string } })?.from?.pathname;
+  const locationState = location.state as LoginLocationState | null;
+  const from = locationState?.from?.pathname;
+  const showVerifiedBanner = locationState?.verified === true;
   if (isAuthenticated) {
     return <Navigate to={from || '/account'} replace />;
   }
@@ -105,6 +112,18 @@ export default function LoginPage() {
 
         {/* Form Card */}
         <div className="rounded-2xl bg-white/[0.07] backdrop-blur-xl border border-white/10 p-6 sm:p-8">
+          {showVerifiedBanner && (
+            <div
+              className="mb-5 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 animate-fade-in"
+              role="status"
+              aria-live="polite"
+            >
+              <p className="text-emerald-200 text-sm font-medium">
+                Account verified successfully. Please sign in to continue.
+              </p>
+            </div>
+          )}
+
           {globalError && (
             <div
               className="mb-5 rounded-xl bg-red-500/10 border border-red-500/20 p-4 animate-fade-in"

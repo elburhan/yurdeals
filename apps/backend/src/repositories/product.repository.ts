@@ -30,6 +30,7 @@ const PRODUCT_LIST_SELECT = Prisma.validator<Prisma.ProductSelect>()({
   isPublished: true,
   isFeatured: true,
   isActive: true,
+  inventoryQuantity: true,
   preorderSlotsTotal: true,
   preorderSlotsRemaining: true,
   preorderStartsAt: true,
@@ -49,7 +50,6 @@ const PRODUCT_LIST_SELECT = Prisma.validator<Prisma.ProductSelect>()({
     },
   },
   images: {
-    where: { isPrimary: true },
     select: {
       id: true,
       url: true,
@@ -58,7 +58,6 @@ const PRODUCT_LIST_SELECT = Prisma.validator<Prisma.ProductSelect>()({
       isPrimary: true,
     },
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-    take: 1,
   },
 });
 
@@ -396,6 +395,8 @@ function toFullTextSearchText(search: string): string {
 }
 
 function mapProductListItem(record: ProductListRecord): ProductListItem {
+  const primaryImage = record.images.find((image) => image.isPrimary) ?? record.images[0] ?? null;
+
   return {
     id: record.id,
     name: record.name,
@@ -409,6 +410,7 @@ function mapProductListItem(record: ProductListRecord): ProductListItem {
     isPublished: record.isPublished,
     isFeatured: record.isFeatured,
     isActive: record.isActive,
+    inventoryQuantity: record.inventoryQuantity,
     preorderSlotsTotal: record.preorderSlotsTotal,
     preorderSlotsRemaining: record.preorderSlotsRemaining,
     preorderStartsAt: record.preorderStartsAt?.toISOString() ?? null,
@@ -418,7 +420,7 @@ function mapProductListItem(record: ProductListRecord): ProductListItem {
     salesVelocity7d: record.salesVelocity7d,
     salesVelocity30d: record.salesVelocity30d,
     unitsSoldTotal: record.unitsSoldTotal,
-    primaryImage: record.images[0] ?? null,
+    primaryImage,
     category: record.category,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),

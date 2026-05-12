@@ -3,7 +3,20 @@
 // ============================================
 
 import { createContext, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, clearStoredAccessToken } from '../lib/api';
+import {
+  login as loginRequest,
+  resendOtp as resendOtpRequest,
+  signup as signupRequest,
+  verifyOtp as verifyOtpRequest,
+  type LoginInput,
+  type OtpChannel,
+  type RegisterInput,
+  type RegisterResult,
+  type ResendOtpInput,
+  type VerificationContext,
+  type VerifyOtpInput,
+} from '../lib/authApi';
 
 /** User shape returned from the backend */
 export interface AuthUser {
@@ -21,16 +34,11 @@ export interface AuthUser {
   updatedAt: string;
 }
 
-interface RegisterInput {
-  email?: string;
-  password: string;
-  name: string;
-  phone: string;
-}
+export type { LoginInput, OtpChannel, RegisterInput, RegisterResult, VerificationContext };
 
-interface LoginInput {
-  identifier: string;
-  password: string;
+export interface VerifyOtpResult {
+  status: 'authenticated' | 'verified';
+  user: AuthUser | null;
 }
 
 export interface AuthContextValue {
@@ -38,7 +46,9 @@ export interface AuthContextValue {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (input: LoginInput) => Promise<AuthUser>;
-  register: (input: RegisterInput) => Promise<void>;
+  register: (input: RegisterInput) => Promise<RegisterResult>;
+  verifyOtp: (input: VerifyOtpInput) => Promise<VerifyOtpResult>;
+  resendOtp: (input: ResendOtpInput) => Promise<VerificationContext>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -59,6 +69,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const res = await api.get<{ user: AuthUser }>('/auth/me');
       setUser(res.data.user);
     } catch {
+      clearStoredAccessToken();
       setUser(null);
     }
   }, []);
@@ -68,14 +79,38 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [refreshUser]);
 
   const login = useCallback(async (input: LoginInput) => {
-    const res = await api.post<{ user: AuthUser }>('/auth/login', input);
-    setUser(res.data.user);
-    return res.data.user;
+    const authenticatedUser = await loginRequest(input);
+    setUser(authenticatedUser);
+    return authenticatedUser;
   }, []);
 
   const register = useCallback(async (input: RegisterInput) => {
-    const res = await api.post<{ user: AuthUser }>('/auth/register', input);
-    setUser(res.data.user);
+    const result = await signupRequest(input);
+
+    if (result.kind === 'authenticated') {
+      setUser(result.user);
+    } else {
+      setUser(null);
+    }
+
+    return result;
+  }, []);
+
+  const verifyOtp = useCallback(async (input: VerifyOtpInput): Promise<VerifyOtpResult> => {
+    const result = await verifyOtpRequest(input);
+
+    if (result.authenticated && result.user) {
+      setUser(result.user);
+      return { status: 'authenticated', user: result.user };
+    }
+
+    setUser(null);
+    return { status: 'verified', user: result.user };
+  }, []);
+
+  const resendOtp = useCallback(async (input: ResendOtpInput): Promise<VerificationContext> => {
+    const result = await resendOtpRequest(input);
+    return result.verification;
   }, []);
 
   const logout = useCallback(async () => {
@@ -84,6 +119,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch {
       // Ignore errors on logout — clear local state regardless
     }
+    clearStoredAccessToken();
     setUser(null);
   }, []);
 
@@ -94,10 +130,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
       isAuthenticated: user !== null,
       login,
       register,
+      verifyOtp,
+      resendOtp,
       logout,
       refreshUser,
     }),
-    [user, isLoading, login, register, logout, refreshUser],
+    [user, isLoading, login, register, verifyOtp, resendOtp, logout, refreshUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

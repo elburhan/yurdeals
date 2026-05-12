@@ -8,7 +8,10 @@ export default defineConfig({
     envDir: repoRoot,
     server: {
         port: 5173,
-        allowedHosts: ['37af-79-127-206-187.ngrok-free.app'],
+        allowedHosts: [
+            '37af-79-127-206-187.ngrok-free.app',
+            '4a02-79-127-206-187.ngrok-free.app',
+        ],
         proxy: {
             '/api': {
                 target: 'http://localhost:4000',

@@ -2,20 +2,11 @@
 // Tracking Service
 // ============================================
 
-import { OrderSummary, OrderTrackingData, TrackingTimelineEvent } from '@yurdeals/shared';
+import { OrderTrackingData, PublicOrderTrackingData, TrackingTimelineEvent } from '@yurdeals/shared';
 import { AppError } from '../middleware/errorHandler';
-import { orderRepository } from '../repositories/order.repository';
+import { orderRepository, PublicTrackingLookupRecord } from '../repositories/order.repository';
 import { shipmentEventRepository } from '../repositories/shipmentEvent.repository';
 import { PublicOrderTrackingQueryInput } from '../schemas/tracking.schema';
-
-interface PublicTrackedOrder {
-  order: OrderSummary;
-  tracking: OrderTrackingData;
-}
-
-interface PublicOrderTrackingLookupData {
-  orders: PublicTrackedOrder[];
-}
 
 export async function getOrderTracking(
   userId: string,
@@ -32,21 +23,18 @@ export async function getOrderTracking(
 
 export async function getPublicOrderTracking(
   query: PublicOrderTrackingQueryInput,
-): Promise<PublicOrderTrackingLookupData> {
-  const records = await orderRepository.findPublicTrackingOrdersByPhone(query.phone, query.orderNumber);
+) : Promise<PublicOrderTrackingData> {
+  const order = await orderRepository.findPublicTrackingOrder(query.phone, query.orderNumber);
 
-  if (records.length === 0) {
-    throw new AppError('No recent orders were found for that phone number.', 404, 'ORDER_NOT_FOUND');
+  if (!order) {
+    throw new AppError(
+      'We could not find a matching order for that phone number and order number.',
+      404,
+      'ORDER_NOT_FOUND',
+    );
   }
 
-  const orders = await Promise.all(
-    records.map(async (record) => ({
-      order: record.order,
-      tracking: await buildTrackingData(record.trackingBase, record.order.id),
-    })),
-  );
-
-  return { orders };
+  return buildPublicTrackingData(order);
 }
 
 async function buildTrackingData(
@@ -57,8 +45,10 @@ async function buildTrackingData(
     shipments: Array<{ estimatedAt: Date | null }>;
   },
   orderId: string,
+  shipmentEventsOverride?: TrackingTimelineEventSource[],
 ): Promise<OrderTrackingData> {
-  const shipmentEvents = await shipmentEventRepository.findEventsByOrderId(orderId);
+  const shipmentEvents =
+    shipmentEventsOverride ?? (await shipmentEventRepository.findEventsByOrderId(orderId));
   const timeline: TrackingTimelineEvent[] = [
     {
       status: 'ORDER_CREATED',
@@ -99,6 +89,10 @@ async function buildTrackingData(
   };
 }
 
+type TrackingTimelineEventSource = Awaited<
+  ReturnType<typeof shipmentEventRepository.findEventsByOrderId>
+>[number];
+
 function getTimelineLabel(status: string): string {
   const labels: Record<string, string> = {
     PAYMENT_CONFIRMED: 'Payment confirmed',
@@ -110,4 +104,35 @@ function getTimelineLabel(status: string): string {
   };
 
   return labels[status] ?? status.replace(/_/g, ' ');
+}
+
+async function buildPublicTrackingData(
+  order: PublicTrackingLookupRecord,
+): Promise<PublicOrderTrackingData> {
+  const shipmentEvents = await shipmentEventRepository.findEventsByOrderId(order.id);
+  const tracking = await buildTrackingData(
+    {
+      status: order.status,
+      createdAt: order.createdAt,
+      payments: order.payments,
+      shipments: order.shipments.map((shipment) => ({ estimatedAt: shipment.estimatedAt })),
+    },
+    order.id,
+    shipmentEvents,
+  );
+
+  const latestPayment = order.payments.at(-1)?.status ?? null;
+  const latestShipmentStatus = shipmentEvents.at(-1)?.status ?? order.shipments[0]?.status ?? null;
+  const itemCount = order.items.reduce((total, item) => total + item.quantity, 0);
+
+  return {
+    orderNumber: order.orderNumber,
+    status: order.status,
+    paymentStatus: latestPayment,
+    shipmentStatus: latestShipmentStatus,
+    eta: tracking.eta,
+    itemCount,
+    itemSummary: order.items.slice(0, 3).map((item) => `${item.quantity} x ${item.name}`),
+    tracking,
+  };
 }

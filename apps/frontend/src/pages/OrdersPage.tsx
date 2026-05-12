@@ -133,7 +133,7 @@ function OrdersContent() {
                   </p>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  {order.status === 'PENDING' && (
+                  {canCancelOrder(order.status) && (
                     <button
                       type="button"
                       disabled={cancellingId === order.id}
@@ -181,6 +181,10 @@ function OrdersContent() {
       </section>
     </main>
   );
+}
+
+function canCancelOrder(status: OrderSummary['status']): boolean {
+  return status === 'PENDING';
 }
 
 function formatDate(value: string): string {

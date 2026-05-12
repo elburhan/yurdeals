@@ -26,10 +26,13 @@ const CART_SELECT = {
           name: true,
           slug: true,
           stockType: true,
+          inventoryQuantity: true,
+          preorderSlotsRemaining: true,
+          preorderStartsAt: true,
+          preorderEndsAt: true,
           currency: true,
           sourceCountry: true,
           images: {
-            where: { isPrimary: true },
             select: {
               id: true,
               url: true,
@@ -38,7 +41,6 @@ const CART_SELECT = {
               isPrimary: true,
             },
             orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-            take: 1,
           },
         },
       },
@@ -62,6 +64,10 @@ const PUBLIC_PRODUCT_SELECT = {
   basePrice: true,
   currency: true,
   stockType: true,
+  inventoryQuantity: true,
+  preorderSlotsRemaining: true,
+  preorderStartsAt: true,
+  preorderEndsAt: true,
   isActive: true,
   isPublished: true,
   approvalStatus: true,
@@ -105,7 +111,12 @@ export interface CartItemStockCheck {
   id: string;
   quantity: number;
   product: {
+    name: string;
     stockType: ProductStockType;
+    inventoryQuantity: number | null;
+    preorderSlotsRemaining: number | null;
+    preorderStartsAt: Date | null;
+    preorderEndsAt: Date | null;
     variants: Array<{
       id: string;
       stock: number;
@@ -178,7 +189,12 @@ export class CartRepository {
         quantity: true,
         product: {
           select: {
+            name: true,
             stockType: true,
+            inventoryQuantity: true,
+            preorderSlotsRemaining: true,
+            preorderStartsAt: true,
+            preorderEndsAt: true,
             variants: {
               where: { isActive: true },
               select: {
@@ -322,6 +338,8 @@ function mapCart(cart: CartRecord): CartData {
 
 function mapCartItem(item: CartRecord['items'][number]): CartItemSummary {
   const priceSnapshot = Number(item.priceSnapshot);
+  const primaryImage =
+    item.product.images.find((image) => image.isPrimary) ?? item.product.images[0] ?? null;
 
   return {
     id: item.id,
@@ -338,7 +356,7 @@ function mapCartItem(item: CartRecord['items'][number]): CartItemSummary {
       stockType: item.product.stockType,
       currency: item.product.currency,
       sourceCountry: item.product.sourceCountry,
-      primaryImage: item.product.images[0] ?? null,
+      primaryImage,
     },
     variant: item.variant
       ? {

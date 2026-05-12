@@ -39,7 +39,7 @@ export const blogPosts: BlogPost[] = [
         heading: 'Confirm your delivery details',
         body: [
           'At checkout, you provide your name, phone number, state, city, and area or landmark so our team can coordinate delivery clearly.',
-          'You can pay online through Paystack or complete the order with our support team on WhatsApp.',
+          'You can pay online through our secure payment flow or complete the order with our support team on WhatsApp.',
         ],
       },
       {

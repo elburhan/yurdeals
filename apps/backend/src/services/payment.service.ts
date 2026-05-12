@@ -7,7 +7,11 @@ import { PaymentProvider, PaymentStatus } from '@prisma/client';
 import { PaymentInitiationData, PaymentStatusData } from '@yurdeals/shared';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils';
-import { paymentRepository, VerifiablePaymentRecord } from '../repositories/payment.repository';
+import {
+  paymentRepository,
+  PENDING_PAYMENT_STALE_WINDOW_MS,
+  VerifiablePaymentRecord,
+} from '../repositories/payment.repository';
 import { InitiateGuestPaymentInput, InitiatePaymentInput } from '../schemas/payment.schema';
 import { FlutterwaveGateway } from './payment-gateways/flutterwave.gateway';
 import { writeAuditLog } from './audit.service';
@@ -15,8 +19,8 @@ import { notifyPaymentFailed, notifyPaymentSuccess } from './notification.servic
 import { PaymentGateway, ProviderEvent } from './payment-gateways/paymentGateway.types';
 import { PaystackGateway } from './payment-gateways/paystack.gateway';
 import { handleOrderStatusTransition } from './shipmentEvent.service';
-import { CreateOrderInput } from '../schemas/order.schema';
-import { mapPayment, orderRepository } from '../repositories/order.repository';
+import { mapPayment } from '../repositories/order.repository';
+import { verifyGuestOrderAccess } from './guestOrderAccess.service';
 
 const gateways = {
   PAYSTACK: new PaystackGateway(),
@@ -31,14 +35,32 @@ export async function initiatePayment(
   const provider = input.provider as Extract<PaymentProvider, 'PAYSTACK' | 'FLUTTERWAVE'>;
   const gateway = getGateway(provider);
   const reference = createPaymentReference(provider);
-  // References are generated server-side and stored before initialize so every provider
-  // callback, webhook, and verify call can reconcile against a unique local payment record.
-  const { order, payment } = await paymentRepository.createPendingPayment(
+  const preparedAttempt = await paymentRepository.prepareOwnedPaymentAttempt(
     userId,
     orderId,
     provider,
     reference,
   );
+
+  if (preparedAttempt.resolution === 'REUSED_PENDING') {
+    logger.info('Reusing active pending payment attempt', {
+      paymentId: preparedAttempt.payment.id,
+      orderId: preparedAttempt.order.id,
+      provider,
+      staleWindowMinutes: Math.floor(PENDING_PAYMENT_STALE_WINDOW_MS / 60000),
+    });
+
+    return {
+      payment: preparedAttempt.payment,
+      authorizationUrl: assertAuthorizationUrl(preparedAttempt.payment),
+      reference: preparedAttempt.payment.providerRef ?? preparedAttempt.payment.reference,
+      accessCode: preparedAttempt.payment.accessCode ?? null,
+    };
+  }
+
+  const { order, payment } = preparedAttempt;
+  // References are generated server-side and stored before initialize so every provider
+  // callback, webhook, and verify call can reconcile against a unique local payment record.
 
   const result = await gateway.initializePayment({
     amount: payment.amount,
@@ -83,13 +105,31 @@ export async function initiateGuestPayment(
   const provider = input.provider as Extract<PaymentProvider, 'PAYSTACK' | 'FLUTTERWAVE'>;
   const gateway = getGateway(provider);
   const reference = createPaymentReference(provider);
-  // Guest and authenticated flows both create and store the server-side reference first.
-  const { order, payment } = await paymentRepository.createPendingGuestPayment(
+  await verifyGuestOrderAccess(orderId, input.guest_access_token);
+  const preparedAttempt = await paymentRepository.prepareGuestPaymentAttempt(
     orderId,
-    input.guest_access_token,
     provider,
     reference,
   );
+
+  if (preparedAttempt.resolution === 'REUSED_PENDING') {
+    logger.info('Reusing active guest pending payment attempt', {
+      paymentId: preparedAttempt.payment.id,
+      orderId: preparedAttempt.order.id,
+      provider,
+      staleWindowMinutes: Math.floor(PENDING_PAYMENT_STALE_WINDOW_MS / 60000),
+    });
+
+    return {
+      payment: preparedAttempt.payment,
+      authorizationUrl: assertAuthorizationUrl(preparedAttempt.payment),
+      reference: preparedAttempt.payment.providerRef ?? preparedAttempt.payment.reference,
+      accessCode: preparedAttempt.payment.accessCode ?? null,
+    };
+  }
+
+  const { order, payment } = preparedAttempt;
+  // Guest and authenticated flows both create and store the server-side reference first.
 
   const result = await gateway.initializePayment({
     amount: payment.amount,
@@ -129,49 +169,6 @@ export async function initiateGuestPayment(
   };
 }
 
-export async function checkoutWithPaystack(
-  userId: string,
-  input: CreateOrderInput,
-): Promise<{ order: import('@yurdeals/shared').OrderSummary; payment: import('@yurdeals/shared').PaymentSummary; authorizationUrl: string; reference: string; accessCode?: string | null; }> {
-  const provider = PaymentProvider.PAYSTACK;
-  const gateway = getGateway(provider);
-  const reference = createPaymentReference(provider);
-  const checkout = await orderRepository.createCheckoutFromCart(userId, input, provider, reference);
-
-  const result = await gateway.initializePayment({
-    amount: checkout.payment.amount,
-    currency: checkout.payment.currency,
-    orderId: checkout.order.id,
-    paymentId: checkout.payment.id,
-    reference,
-    email: 'customerEmail' in checkout.payment && checkout.payment.customerEmail ? checkout.payment.customerEmail : 'payments@yurdeals.com',
-    name: checkout.order.shippingAddress
-      ? `${checkout.order.shippingAddress.firstName} ${checkout.order.shippingAddress.lastName}`
-      : 'YurDeals Customer',
-  });
-
-  const payment = await paymentRepository.updatePaymentMetadata(checkout.payment.id, {
-    authorizationUrl: result.authorizationUrl,
-    accessCode: result.accessCode ?? null,
-    providerRef: result.reference,
-    gatewayResponse: JSON.stringify(result.providerResponse),
-    metadata: {
-      reference,
-      authorizationUrl: result.authorizationUrl,
-      provider,
-      flow: 'CHECKOUT',
-    },
-  });
-
-  return {
-    order: checkout.order,
-    payment,
-    authorizationUrl: result.authorizationUrl,
-    reference: result.reference,
-    accessCode: result.accessCode ?? null,
-  };
-}
-
 export async function getPaymentStatus(
   userId: string,
   orderId: string,
@@ -195,7 +192,8 @@ export async function getGuestPaymentStatus(
   paymentId: string,
   guestAccessToken: string,
 ): Promise<PaymentStatusData> {
-  const payment = await paymentRepository.findGuestPayment(orderId, paymentId, guestAccessToken);
+  await verifyGuestOrderAccess(orderId, guestAccessToken);
+  const payment = await paymentRepository.findGuestPayment(orderId, paymentId);
 
   if (!payment) {
     throw new AppError('Payment not found', 404, 'PAYMENT_NOT_FOUND');
@@ -227,10 +225,10 @@ export async function verifyGuestPayment(
   paymentId: string,
   guestAccessToken: string,
 ): Promise<PaymentStatusData> {
+  await verifyGuestOrderAccess(orderId, guestAccessToken);
   const payment = await paymentRepository.findGuestPaymentForVerification(
     orderId,
     paymentId,
-    guestAccessToken,
   );
 
   if (!payment) {
@@ -395,7 +393,12 @@ export async function handlePaymentWebhook(
   const context = await paymentRepository.findPaymentEventContext(payment.id);
 
   if (context && result.statusChanged && payment.status === 'SUCCESS') {
-    await notifyPaymentSuccess(context.order.userId, context.order, context.payment);
+    await notifyPaymentSuccess(
+      context.order.userId,
+      context.order,
+      context.payment,
+      buildGuestNotificationRecipient(context),
+    );
     await handleOrderStatusTransition(context.order.id, 'PAYMENT_CONFIRMED');
     await writeAuditLog({
       userId: context.order.userId,
@@ -531,7 +534,12 @@ async function verifyPaymentRecord(
     const context = await paymentRepository.findPaymentEventContext(result.payment.id);
 
     if (context) {
-      await notifyPaymentSuccess(context.order.userId, context.order, context.payment);
+      await notifyPaymentSuccess(
+        context.order.userId,
+        context.order,
+        context.payment,
+        buildGuestNotificationRecipient(context),
+      );
       await handleOrderStatusTransition(context.order.id, 'PAYMENT_CONFIRMED');
       await writeAuditLog({
         userId: context.order.userId,
@@ -601,6 +609,39 @@ async function verifyPaystackEvent(event: ProviderEvent): Promise<ProviderEvent>
 
 function shouldVerifyPayment(status: PaymentStatusData['payment']['status']): boolean {
   return status === PaymentStatus.PENDING || status === PaymentStatus.AUTHORIZED;
+}
+
+function buildGuestNotificationRecipient(
+  context: Awaited<ReturnType<typeof paymentRepository.findPaymentEventContext>>,
+): { email: string; name: string } | undefined {
+  if (!context || !context.order.notes?.includes('[customerType:GUEST]')) {
+    return undefined;
+  }
+
+  const email = context.payment.customerEmail?.trim().toLowerCase();
+  if (!email) {
+    return undefined;
+  }
+
+  const firstName = context.order.shippingAddress?.firstName?.trim() ?? '';
+  const lastName = context.order.shippingAddress?.lastName?.trim() ?? '';
+
+  return {
+    email,
+    name: `${firstName} ${lastName}`.trim() || 'there',
+  };
+}
+
+function assertAuthorizationUrl(payment: PaymentInitiationData['payment']): string {
+  if (!payment.authorizationUrl) {
+    throw new AppError(
+      'Payment link is no longer available. Please start payment again.',
+      409,
+      'PAYMENT_LINK_UNAVAILABLE',
+    );
+  }
+
+  return payment.authorizationUrl;
 }
 
 function createPaymentReference(provider: PaymentProvider): string {

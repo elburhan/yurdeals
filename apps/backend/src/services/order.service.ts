@@ -8,7 +8,7 @@ import { CreateGuestOrderInput, CreateOrderInput, OrderQueryInput } from '../sch
 import { AppError } from '../middleware/errorHandler';
 import { AuditContext, writeAuditLog } from './audit.service';
 import { notifyOrderCreated, notifyOrderStatusChanged } from './notification.service';
-import { checkoutWithPaystack } from './payment.service';
+import { verifyGuestOrderAccess } from './guestOrderAccess.service';
 
 export async function listUserOrders(
   userId: string,
@@ -79,7 +79,8 @@ export async function markGuestOrderWhatsappCheckout(
   guestAccessToken: string,
   auditContext?: AuditContext,
 ): Promise<OrderDetailData> {
-  const order = await orderRepository.markGuestWhatsappCheckout(orderId, guestAccessToken);
+  await verifyGuestOrderAccess(orderId, guestAccessToken);
+  const order = await orderRepository.markGuestWhatsappCheckout(orderId);
   await writeAuditLog({
     ...auditContext,
     action: 'GUEST_ORDER_MARKED_WHATSAPP_CHECKOUT',
@@ -123,6 +124,13 @@ export async function createGuestOrderFromCart(
   auditContext?: AuditContext,
 ): Promise<OrderCreationData> {
   const data = await orderRepository.createGuestOrder(input);
+  const orderEvent = await orderRepository.findOrderForEvents(data.order.id);
+  if (orderEvent) {
+    await notifyOrderCreated(orderEvent.userId, data.order, {
+      email: input.guest.email?.trim().toLowerCase() ?? '',
+      name: input.guest.full_name,
+    });
+  }
   await writeAuditLog({
     ...auditContext,
     action: 'GUEST_ORDER_CREATED',
@@ -136,30 +144,5 @@ export async function createGuestOrderFromCart(
       customerType: 'GUEST',
     },
   });
-  return data;
-}
-
-export async function checkoutOrder(
-  userId: string,
-  input: CreateOrderInput,
-  auditContext?: AuditContext,
-) {
-  const data = await checkoutWithPaystack(userId, input);
-  await notifyOrderCreated(userId, data.order);
-  await writeAuditLog({
-    ...auditContext,
-    userId,
-    action: 'ORDER_CHECKOUT_CREATED',
-    entity: 'Order',
-    entityId: data.order.id,
-    newData: {
-      orderNumber: data.order.orderNumber,
-      total: data.order.total,
-      currency: data.order.currency,
-      paymentReference: data.reference,
-      paymentProvider: data.payment.provider,
-    },
-  });
-
   return data;
 }

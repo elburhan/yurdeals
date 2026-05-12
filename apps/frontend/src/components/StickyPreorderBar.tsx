@@ -1,11 +1,13 @@
 interface StickyPreorderBarProps {
   price: string;
+  arrivalLabel?: string;
   isAdding: boolean;
   onPreorder: () => void;
 }
 
 export function StickyPreorderBar({
   price,
+  arrivalLabel = '25-40 days',
   isAdding,
   onPreorder,
 }: StickyPreorderBarProps): JSX.Element {
@@ -17,7 +19,7 @@ export function StickyPreorderBar({
             Preorder price
           </p>
           <p className="font-display text-lg font-bold text-surface-950">{price}</p>
-          <p className="text-xs text-emerald-700">Estimated arrival: 25-40 days</p>
+          <p className="text-xs text-emerald-700">Estimated arrival: {arrivalLabel}</p>
         </div>
         <button
           type="button"

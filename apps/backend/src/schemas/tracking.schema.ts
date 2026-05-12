@@ -48,7 +48,11 @@ export const publicOrderTrackingQuerySchema = z.object({
 
       return normalized;
     }),
-  orderNumber: z.string().trim().min(3).max(80).optional(),
+  orderNumber: z
+    .string({ required_error: 'Order number is required' })
+    .trim()
+    .min(3, 'Order number is required')
+    .max(80),
 });
 
 export type OrderTrackingParamsInput = z.infer<typeof orderTrackingParamsSchema>;

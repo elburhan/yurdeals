@@ -6,6 +6,7 @@ export {
   paymentRateLimiter,
   adminRateLimiter,
   webhookRateLimiter,
+  trackingLookupRateLimiter,
 } from './rateLimiter';
 export { AppError, notFoundHandler, errorHandler } from './errorHandler';
 export { requireAuth, requireRole, SAFE_USER_SELECT } from './auth';

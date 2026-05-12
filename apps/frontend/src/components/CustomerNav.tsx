@@ -11,7 +11,7 @@ const links = [
   { to: '/', label: 'Home' },
   { to: '/categories/all', label: 'Categories' },
   { to: '/cart', label: 'Cart' },
-  { to: '/orders', label: 'Orders' },
+  { to: '/orders/track', label: 'Track' },
   { to: '/account', label: 'Account' },
 ];
 
@@ -19,9 +19,8 @@ const desktopLinks = [
   { to: '/', label: 'Home' },
   { to: '/categories/all', label: 'Categories' },
   { to: '/categories/all?preorder=true', label: 'Preorder Deals' },
-  { to: '/#how-preordering-works', label: 'How It Works' },
-  { to: '/blog', label: 'Blog & Guides' },
-  { to: '/orders', label: 'Track Order' },
+  { to: '/blog', label: 'Guides' },
+  { to: '/orders/track', label: 'Track Order' },
   { to: 'mailto:support@yurdeals.com', label: 'Support' },
 ];
 

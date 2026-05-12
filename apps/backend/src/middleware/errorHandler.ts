@@ -18,6 +18,7 @@ export class AppError extends Error {
     field: string;
     message: string;
   }>;
+  public readonly meta?: Record<string, unknown>;
 
   constructor(
     message: string,
@@ -25,12 +26,14 @@ export class AppError extends Error {
     code: string,
     isOperational = true,
     details?: Array<{ field: string; message: string }>,
+    meta?: Record<string, unknown>,
   ) {
     super(message);
     this.statusCode = statusCode;
     this.code = code;
     this.isOperational = isOperational;
     this.details = details;
+    this.meta = meta;
     Object.setPrototypeOf(this, AppError.prototype);
   }
 }
@@ -76,6 +79,7 @@ export function errorHandler(
       message: isProduction && statusCode === 500 ? 'An unexpected error occurred' : err.message,
       ...(correlationId ? { correlationId } : {}),
       ...(err instanceof AppError && err.details ? { details: err.details } : {}),
+      ...(err instanceof AppError && err.meta ? { meta: err.meta } : {}),
       ...(isDev() && { stack: err.stack }),
     },
   });

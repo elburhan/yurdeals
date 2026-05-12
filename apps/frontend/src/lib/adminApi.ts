@@ -28,11 +28,18 @@ export async function createAdminProduct(input: {
   category_id: string;
   base_price: number;
   currency?: string;
-  stock_type: 'LOCAL' | 'PREORDER';
+  stock_type: 'IN_STOCK' | 'PREORDER';
+  inventory_quantity?: number;
+  preorder_slots_total?: number;
+  preorder_slots_remaining?: number;
+  preorder_starts_at?: string;
+  preorder_ends_at?: string;
+  estimated_arrival_at?: string;
   sku?: string;
   weight?: number;
   is_featured?: boolean;
   image_url?: string;
+  images?: string[];
 }): Promise<ApiResponse<{ product: AdminProductSummary }>> {
   return api.post<{ product: AdminProductSummary }>('/admin/products', input);
 }
@@ -55,12 +62,19 @@ export async function updateAdminProduct(
     category_id: string;
     base_price: number;
     currency: string;
-    stock_type: 'LOCAL' | 'PREORDER';
+    stock_type: 'IN_STOCK' | 'PREORDER';
+    inventory_quantity: number;
+    preorder_slots_total: number;
+    preorder_slots_remaining: number;
+    preorder_starts_at: string;
+    preorder_ends_at: string;
+    estimated_arrival_at: string;
     sku: string;
     weight: number;
     is_featured: boolean;
     is_active: boolean;
     image_url: string;
+    images: string[];
   }>,
 ): Promise<ApiResponse<{ product: AdminProductSummary }>> {
   return api.put<{ product: AdminProductSummary }>(`/admin/products/${productId}`, input);

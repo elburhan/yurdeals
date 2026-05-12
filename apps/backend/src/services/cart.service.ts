@@ -11,6 +11,7 @@ import {
   isLocalProduct,
 } from '../repositories/cart.repository';
 import { AddCartItemInput, UpdateCartItemInput } from '../schemas/cart.schema';
+import { assertProductAvailabilityForQuantity } from '../utils/productAvailability';
 
 export async function getCart(userId: string): Promise<CartData> {
   return cartRepository.findCartByUserId(userId);
@@ -41,6 +42,14 @@ export async function addCartItem(userId: string, input: AddCartItemInput): Prom
     }
   }
 
+  assertProductAvailabilityForQuantity({
+    product,
+    quantity: input.quantity,
+    variant: input.variant_id
+      ? product.variants.find((candidate) => candidate.id === input.variant_id) ?? null
+      : null,
+  });
+
   const existingLine = await cartRepository.findExistingProductLine(
     userId,
     input.product_id,
@@ -61,6 +70,20 @@ export async function addCartItem(userId: string, input: AddCartItemInput): Prom
       if (input.variant_id && stock !== null && finalQuantity > stock) {
         throw new AppError('Requested quantity exceeds available stock', 409, 'INSUFFICIENT_STOCK');
       }
+
+      assertProductAvailabilityForQuantity({
+        product,
+        quantity: finalQuantity,
+        variant: input.variant_id
+          ? product.variants.find((candidate) => candidate.id === input.variant_id) ?? null
+          : null,
+      });
+    } else {
+      assertProductAvailabilityForQuantity({
+        product,
+        quantity: existingLine.quantity + input.quantity,
+        variant: null,
+      });
     }
   }
 
@@ -98,6 +121,12 @@ export async function updateCartItem(
       );
     }
   }
+
+  assertProductAvailabilityForQuantity({
+    product: item.product,
+    quantity: input.quantity,
+    variant: item.variant,
+  });
 
   return cartRepository.updateItem(userId, cartItemId, input.quantity);
 }

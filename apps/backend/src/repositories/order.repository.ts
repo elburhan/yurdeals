@@ -4,7 +4,6 @@
 
 import {
   OrderStatus,
-  PaymentProvider,
   PaymentStatus,
   Prisma,
   ProductApprovalStatus,
@@ -16,10 +15,16 @@ import { OrderCreationData, OrderItemSummary, OrderSummary, PaymentSummary } fro
 import { prisma } from '../config';
 import { AppError } from '../middleware/errorHandler';
 import { CreateGuestOrderInput, CreateOrderInput } from '../schemas/order.schema';
+import {
+  generateGuestAccessToken,
+  getGuestAccessTokenExpiry,
+  hashGuestAccessToken,
+} from '../services/guestOrderAccess.service';
+import { releaseOrderInventoryReservations } from '../services/inventoryReservation.service';
+import { assertProductAvailabilityForQuantity } from '../utils/productAvailability';
 
 export const WHATSAPP_CHECKOUT_NOTE_TAG = '[checkoutMethod:WHATSAPP]';
 export const GUEST_CUSTOMER_NOTE_TAG = '[customerType:GUEST]';
-export const GUEST_ACCESS_TOKEN_PREFIX = '[guestAccessToken:';
 
 const ADDRESS_SELECT = {
   id: true,
@@ -149,8 +154,11 @@ const ORDER_TRACKING_SELECT = {
   },
 } satisfies Prisma.OrderSelect;
 
-const PUBLIC_TRACKING_ORDER_SELECT = {
-  ...ORDER_SELECT,
+const PUBLIC_TRACKING_LOOKUP_SELECT = {
+  id: true,
+  orderNumber: true,
+  status: true,
+  createdAt: true,
   payments: {
     where: {
       status: { in: [PaymentStatus.SUCCESS, PaymentStatus.FAILED, PaymentStatus.AUTHORIZED] },
@@ -165,11 +173,19 @@ const PUBLIC_TRACKING_ORDER_SELECT = {
   shipments: {
     select: {
       estimatedAt: true,
+      status: true,
     },
     orderBy: { createdAt: 'asc' },
     take: 1,
   },
-  user: {
+  items: {
+    select: {
+      name: true,
+      quantity: true,
+    },
+    orderBy: { id: 'asc' },
+  },
+  shippingAddress: {
     select: {
       phone: true,
     },
@@ -182,6 +198,9 @@ type OrderWithUserAndPaymentsRecord = Prisma.OrderGetPayload<{
 }>;
 type OrderEventRecord = Prisma.OrderGetPayload<{ select: typeof ORDER_EVENT_SELECT }>;
 type OrderTrackingRecord = Prisma.OrderGetPayload<{ select: typeof ORDER_TRACKING_SELECT }>;
+type PublicTrackingLookupRecord = Prisma.OrderGetPayload<{
+  select: typeof PUBLIC_TRACKING_LOOKUP_SELECT;
+}>;
 interface CartCheckoutItem {
   id: string;
   productId: string;
@@ -196,6 +215,10 @@ interface CartCheckoutItem {
     isPublished: boolean;
     approvalStatus: ProductApprovalStatus;
     stockType: ProductStockType;
+    inventoryQuantity: number | null;
+    preorderSlotsRemaining: number | null;
+    preorderStartsAt: Date | null;
+    preorderEndsAt: Date | null;
     category: { isActive: boolean };
   };
   variant: {
@@ -205,12 +228,7 @@ interface CartCheckoutItem {
   } | null;
 }
 
-interface CheckoutResult {
-  order: OrderSummary;
-  payment: PaymentSummary;
-}
-
-export type { OrderEventRecord, OrderTrackingRecord };
+export type { OrderEventRecord, OrderTrackingRecord, PublicTrackingLookupRecord };
 
 export class OrderRepository {
   async findUserOrders(
@@ -253,7 +271,7 @@ export class OrderRepository {
           id: true,
           status: true,
           payments: {
-            select: { status: true },
+            select: { id: true, provider: true, status: true },
           },
         },
       });
@@ -292,6 +310,24 @@ export class OrderRepository {
         data: { status: PaymentStatus.ABANDONED },
       });
 
+      const auditPayment = existingOrder.payments.find(
+        (payment) =>
+          payment.status === PaymentStatus.PENDING || payment.status === PaymentStatus.AUTHORIZED,
+      );
+      if (auditPayment) {
+        await releaseOrderInventoryReservations(tx, orderId, {
+          reason: 'ORDER_CANCELLED',
+          payment: {
+            paymentId: auditPayment.id,
+            provider: auditPayment.provider,
+          },
+        });
+      } else {
+        await releaseOrderInventoryReservations(tx, orderId, {
+          reason: 'ORDER_CANCELLED',
+        });
+      }
+
       return tx.order.update({
         where: { id: orderId },
         data: {
@@ -311,12 +347,9 @@ export class OrderRepository {
     });
   }
 
-  async markGuestWhatsappCheckout(orderId: string, guestAccessToken: string): Promise<OrderSummary> {
+  async markGuestWhatsappCheckout(orderId: string): Promise<OrderSummary> {
     return this.markWhatsappCheckoutInternal({
-      where: {
-        id: orderId,
-        notes: { contains: createGuestTokenTag(guestAccessToken) },
-      },
+      where: { id: orderId },
     });
   }
 
@@ -351,6 +384,10 @@ export class OrderRepository {
                   isPublished: true,
                   approvalStatus: true,
                   stockType: true,
+                  inventoryQuantity: true,
+                  preorderSlotsRemaining: true,
+                  preorderStartsAt: true,
+                  preorderEndsAt: true,
                   category: {
                     select: { isActive: true },
                   },
@@ -419,166 +456,8 @@ export class OrderRepository {
     return { order: mapOrder(order) };
   }
 
-  async createCheckoutFromCart(
-    userId: string,
-    input: CreateOrderInput,
-    provider: Extract<PaymentProvider, 'PAYSTACK' | 'FLUTTERWAVE'>,
-    paymentReference: string,
-  ): Promise<CheckoutResult> {
-    const result = await prisma.$transaction(async (tx) => {
-      const address = await tx.address.findFirst({
-        where: { id: input.address_id, userId },
-        select: { id: true },
-      });
-
-      if (!address) {
-        throw new AppError('Address not found', 404, 'ADDRESS_NOT_FOUND');
-      }
-
-      const cart = await tx.cart.findUnique({
-        where: { userId },
-        select: {
-          id: true,
-          items: {
-            select: {
-              id: true,
-              productId: true,
-              variantId: true,
-              quantity: true,
-              priceSnapshot: true,
-              currency: true,
-              product: {
-                select: {
-                  id: true,
-                  name: true,
-                  isActive: true,
-                  isPublished: true,
-                  approvalStatus: true,
-                  stockType: true,
-                  category: {
-                    select: { isActive: true },
-                  },
-                },
-              },
-              variant: {
-                select: {
-                  id: true,
-                  stock: true,
-                  isActive: true,
-                },
-              },
-            },
-            orderBy: { createdAt: 'asc' },
-          },
-        },
-      });
-
-      if (!cart || cart.items.length === 0) {
-        throw new AppError('Cart is empty', 422, 'EMPTY_CART');
-      }
-
-      validateCartCheckoutItems(cart.items);
-      const totals = calculateTotals(cart.items);
-      const orderNumber = await getNextOrderNumber(tx);
-
-      const order = await tx.order.create({
-        data: {
-          orderNumber,
-          userId,
-          status: OrderStatus.PENDING,
-          stockTypeSnapshot: deriveOrderStockSnapshot(cart.items),
-          paymentReference,
-          subtotal: totals.subtotal,
-          shippingFee: totals.shippingFee,
-          tax: totals.tax,
-          discount: totals.discount,
-          total: totals.total,
-          currency: totals.currency,
-          shippingAddressId: address.id,
-          billingAddressId: address.id,
-          notes: input.notes,
-          items: {
-            create: cart.items.map((item) => ({
-              productId: item.productId,
-              variantId: item.variantId,
-              name: item.product.name,
-              price: item.priceSnapshot,
-              quantity: item.quantity,
-              total: item.priceSnapshot.mul(item.quantity),
-              stockTypeSnapshot: item.product.stockType,
-              inspectionRequired: item.product.stockType === ProductStockType.PREORDER,
-            })),
-          },
-        },
-        select: ORDER_SELECT,
-      });
-
-      const user = await tx.user.findUniqueOrThrow({
-        where: { id: userId },
-        select: {
-          email: true,
-          firstName: true,
-          lastName: true,
-        },
-      });
-
-      const payment = await tx.payment.create({
-        data: {
-          orderId: order.id,
-          provider,
-          status: PaymentStatus.PENDING,
-          reference: paymentReference,
-          providerRef: paymentReference,
-          customerEmail: user.email,
-          amount: order.total,
-          currency: order.currency,
-          metadata: {
-            orderId: order.id,
-            orderNumber: order.orderNumber,
-            customerType: 'REGISTERED',
-          },
-        },
-        select: {
-          id: true,
-          orderId: true,
-          provider: true,
-          status: true,
-          reference: true,
-          providerRef: true,
-          providerTransactionId: true,
-          authorizationUrl: true,
-          accessCode: true,
-          customerEmail: true,
-          amount: true,
-          amountCaptured: true,
-          amountRefunded: true,
-          fees: true,
-          currency: true,
-          channel: true,
-          gatewayResponse: true,
-          paidAt: true,
-          verifiedAt: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      });
-
-      await tx.cartItem.deleteMany({
-        where: { cartId: cart.id },
-      });
-
-      return {
-        order: mapOrder(order),
-        payment: mapPayment(payment),
-      };
-    });
-
-    return result;
-  }
-
   async createGuestOrder(input: CreateGuestOrderInput): Promise<OrderCreationData> {
-    const guestAccessToken = crypto.randomBytes(24).toString('hex');
-    const providedGuestEmail = input.guest.email?.toLowerCase();
+    const guestAccessToken = generateGuestAccessToken();
     const { firstName, lastName } = splitFullName(input.guest.full_name);
     const guestStreet = buildGuestStreet(input.guest);
 
@@ -597,6 +476,10 @@ export class OrderRepository {
           basePrice: true,
           currency: true,
           stockType: true,
+          inventoryQuantity: true,
+          preorderSlotsRemaining: true,
+          preorderStartsAt: true,
+          preorderEndsAt: true,
           variants: {
             where: { isActive: true },
             select: {
@@ -634,6 +517,12 @@ export class OrderRepository {
           }
         }
 
+        assertProductAvailabilityForQuantity({
+          product,
+          quantity: item.quantity,
+          variant,
+        });
+
         const price = variant?.price ?? product.basePrice;
         return {
           productId: product.id,
@@ -650,26 +539,19 @@ export class OrderRepository {
 
       const totals = calculateGuestTotals(orderItems);
 
-      const existingUser = providedGuestEmail
-        ? await tx.user.findUnique({
-            where: { email: providedGuestEmail },
-            select: { id: true },
-          })
-        : null;
-
-      const user =
-        existingUser ??
-        (await tx.user.create({
-          data: {
-            email: providedGuestEmail ?? createInternalGuestEmail(),
-            passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12),
-            firstName,
-            lastName,
-            phone: normalizePhone(input.guest.phone),
-            isVerified: false,
-          },
-          select: { id: true },
-        }));
+      const user = await tx.user.create({
+        data: {
+          // Guest checkouts always get an isolated shadow user so public checkout data
+          // cannot attach orders or addresses to an existing registered account.
+          email: createInternalGuestEmail(),
+          passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12),
+          firstName,
+          lastName,
+          phone: normalizePhone(input.guest.phone),
+          isVerified: false,
+        },
+        select: { id: true },
+      });
 
       const address = await tx.address.create({
         data: {
@@ -702,7 +584,9 @@ export class OrderRepository {
           currency: totals.currency,
           shippingAddressId: address.id,
           billingAddressId: address.id,
-          notes: buildGuestOrderNotes(input, guestAccessToken),
+          guestAccessTokenHash: hashGuestAccessToken(guestAccessToken),
+          guestAccessTokenExpiresAt: getGuestAccessTokenExpiry(),
+          notes: buildGuestOrderNotes(input),
           items: {
             create: orderItems.map((item) => ({
               productId: item.productId,
@@ -740,55 +624,37 @@ export class OrderRepository {
     });
   }
 
-  async findPublicTrackingOrdersByPhone(
+  async findPublicTrackingOrder(
     normalizedPhone: string,
-    orderNumber?: string,
-  ): Promise<Array<{ order: OrderSummary; trackingBase: OrderTrackingRecord }>> {
+    orderNumber: string,
+  ): Promise<PublicTrackingLookupRecord | null> {
     const phoneVariants = createPhoneVariants(normalizedPhone);
 
-    const orders = await prisma.order.findMany({
+    return prisma.order.findFirst({
       where: {
-        AND: [
+        orderNumber: {
+          equals: orderNumber.trim(),
+          mode: 'insensitive',
+        },
+        OR: [
+          { shippingAddress: { is: { phone: { in: phoneVariants } } } },
           {
-            OR: [
-              { shippingAddress: { is: { phone: { in: phoneVariants } } } },
-              { user: { is: { phone: { in: phoneVariants } } } },
-            ],
+            user: {
+              is: {
+                phone: { in: phoneVariants },
+              },
+            },
           },
-          ...(orderNumber
-            ? [
-                {
-                  orderNumber: {
-                    equals: orderNumber.trim(),
-                    mode: 'insensitive' as const,
-                  },
-                },
-              ]
-            : []),
         ],
       },
-      select: PUBLIC_TRACKING_ORDER_SELECT,
-      orderBy: { createdAt: 'desc' },
-      take: 10,
+      select: PUBLIC_TRACKING_LOOKUP_SELECT,
     });
-
-    return orders.map((order) => ({
-      order: mapOrder(order),
-      trackingBase: {
-        id: order.id,
-        orderNumber: order.orderNumber,
-        status: order.status,
-        createdAt: order.createdAt,
-        payments: order.payments,
-        shipments: order.shipments,
-      },
-    }));
   }
 
   private async markWhatsappCheckoutInternal(input: {
     where:
       | { id: string; userId: string }
-      | { id: string; notes: { contains: string } };
+      | { id: string };
   }): Promise<OrderSummary> {
     const order = await prisma.$transaction(async (tx) => {
       const existingOrder = await tx.order.findFirst({
@@ -844,6 +710,12 @@ function validateCartCheckoutItems(items: CartCheckoutItem[]): void {
         );
       }
     }
+
+    assertProductAvailabilityForQuantity({
+      product: item.product,
+      quantity: item.quantity,
+      variant: item.variant,
+    });
   }
 }
 
@@ -882,10 +754,9 @@ function deriveOrderStockSnapshot(
     : ProductStockType.IN_STOCK;
 }
 
-function buildGuestOrderNotes(input: CreateGuestOrderInput, guestAccessToken: string): string {
+function buildGuestOrderNotes(input: CreateGuestOrderInput): string {
   return [
     GUEST_CUSTOMER_NOTE_TAG,
-    createGuestTokenTag(guestAccessToken),
     `[preferredContact:${input.guest.preferred_contact_method}]`,
     input.guest.email ? `[guestEmail:${input.guest.email.toLowerCase()}]` : '',
     input.notes ? `Guest notes: ${input.notes}` : '',
@@ -897,10 +768,6 @@ function buildGuestOrderNotes(input: CreateGuestOrderInput, guestAccessToken: st
 
 function buildGuestStreet(guest: CreateGuestOrderInput['guest']): string {
   return [guest.address_line, guest.area, guest.city, guest.state].filter(Boolean).join(', ');
-}
-
-export function createGuestTokenTag(guestAccessToken: string): string {
-  return `${GUEST_ACCESS_TOKEN_PREFIX}${guestAccessToken}]`;
 }
 
 function splitFullName(name: string): { firstName: string; lastName: string } {

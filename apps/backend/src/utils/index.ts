@@ -4,3 +4,9 @@ export type { JwtPayload } from './jwt';
 export { sendSuccess } from './response';
 export { getPagination, getPaginationMeta } from './pagination';
 export type { PaginationInput, PaginationResult } from './pagination';
+export {
+  normalizeAuthIdentifier,
+  normalizeEmail,
+  normalizePhone,
+  expandPhoneLookupVariants,
+} from './authIdentifiers';

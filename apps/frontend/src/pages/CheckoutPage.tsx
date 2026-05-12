@@ -7,7 +7,13 @@ import { CheckoutSteps } from '../components/CheckoutSteps';
 import { CustomerNav } from '../components/CustomerNav';
 import { OrderSummary as CheckoutOrderSummary } from '../components/OrderSummary';
 import { PaymentPanel } from '../components/PaymentPanel';
-import { ShippingForm } from '../components/ShippingForm';
+import {
+  getEmailError,
+  getNigerianPhoneError,
+  normalizeNigerianPhoneNumber,
+  ShippingForm,
+  type ShippingFormState,
+} from '../components/ShippingForm';
 import { SkeletonBlock, SummarySkeleton } from '../components/Skeleton';
 import { TrustBanner } from '../components/TrustBanner';
 import { formatPrice } from '../components/ProductCard';
@@ -17,17 +23,9 @@ import { useToast } from '../context/ToastContext';
 import { createAddress, getAddresses, type AddressPayload } from '../lib/addressApi';
 import { createGuestOrder, createOrder } from '../lib/orderApi';
 
-interface GuestFormState {
-  fullName: string;
-  phone: string;
-  email: string;
-  state: string;
-  city: string;
-  area: string;
-  preferredContactMethod: 'WHATSAPP' | 'SMS' | 'CALL';
-}
+const GUEST_CHECKOUT_STORAGE_KEY = 'yurdeals_guest_checkout_form';
 
-const emptyGuestForm: GuestFormState = {
+const emptyGuestForm: ShippingFormState = {
   fullName: '',
   phone: '',
   email: '',
@@ -42,19 +40,20 @@ export default function CheckoutPage() {
 }
 
 function CheckoutContent() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const { cart, refreshCart } = useCart();
   const { showToast } = useToast();
   const [addresses, setAddresses] = useState<AddressSummary[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState('');
   const [showAddressForm, setShowAddressForm] = useState(false);
-  const [guestForm, setGuestForm] = useState<GuestFormState>(emptyGuestForm);
+  const [guestForm, setGuestForm] = useState<ShippingFormState>(emptyGuestForm);
   const [notes, setNotes] = useState('');
   const [order, setOrder] = useState<OrderSummary | null>(null);
   const [guestAccessToken, setGuestAccessToken] = useState('');
   const [isLoading, setIsLoading] = useState(isAuthenticated);
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [error, setError] = useState('');
+  const [hasRestoredGuestForm, setHasRestoredGuestForm] = useState(false);
 
   async function loadAddresses() {
     if (!isAuthenticated) {
@@ -84,6 +83,60 @@ function CheckoutContent() {
   useEffect(() => {
     void loadAddresses();
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (isAuthenticated || hasRestoredGuestForm || typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      const stored = window.localStorage.getItem(GUEST_CHECKOUT_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Partial<ShippingFormState>;
+        setGuestForm({
+          ...emptyGuestForm,
+          ...parsed,
+          preferredContactMethod:
+            parsed.preferredContactMethod === 'SMS' ||
+            parsed.preferredContactMethod === 'CALL' ||
+            parsed.preferredContactMethod === 'WHATSAPP'
+              ? parsed.preferredContactMethod
+              : 'WHATSAPP',
+        });
+      }
+    } catch {
+      window.localStorage.removeItem(GUEST_CHECKOUT_STORAGE_KEY);
+    } finally {
+      setHasRestoredGuestForm(true);
+    }
+  }, [hasRestoredGuestForm, isAuthenticated]);
+
+  useEffect(() => {
+    if (isAuthenticated || typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(GUEST_CHECKOUT_STORAGE_KEY, JSON.stringify(guestForm));
+  }, [guestForm, isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user?.email || guestForm.email.trim()) {
+      return;
+    }
+
+    setGuestForm((current) => ({
+      ...current,
+      email: current.email.trim() || user.email,
+    }));
+  }, [guestForm.email, isAuthenticated, user?.email]);
+
+  useEffect(() => {
+    if (!order) {
+      return;
+    }
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [order]);
 
   async function handleAddressSubmit(payload: AddressPayload) {
     const response = await createAddress(payload);
@@ -128,11 +181,13 @@ function CheckoutContent() {
         await refreshCart();
         showToast('Preorder created. Choose your payment option.', 'success');
       } else {
+        const normalizedPhone = normalizeNigerianPhoneNumber(guestForm.phone) ?? guestForm.phone.trim();
+
         const response = await createGuestOrder({
           guest: {
             full_name: guestForm.fullName.trim(),
-            phone: guestForm.phone.trim(),
-            email: guestForm.email.trim() || undefined,
+            phone: normalizedPhone,
+            email: guestForm.email.trim().toLowerCase(),
             state: guestForm.state.trim(),
             city: guestForm.city.trim(),
             area: guestForm.area.trim(),
@@ -145,6 +200,7 @@ function CheckoutContent() {
           })),
           notes: notes.trim() || undefined,
         });
+        setGuestForm((current) => ({ ...current, phone: normalizedPhone }));
         setGuestAccessToken(response.data.guestAccessToken ?? '');
         setOrder(response.data.order);
         showToast('Guest preorder created. Choose your payment option.', 'success');
@@ -160,6 +216,11 @@ function CheckoutContent() {
 
   const items = cart?.items ?? [];
   const currentStep = order ? 3 : isAuthenticated ? 2 : 2;
+  const phoneError = !isAuthenticated && error.includes('phone number') ? getNigerianPhoneError(guestForm.phone) : '';
+  const selectedAddress =
+    order?.shippingAddress ??
+    addresses.find((address) => address.id === selectedAddressId) ??
+    null;
 
   return (
     <main className="min-h-screen bg-surface-50 pb-24 sm:pb-0">
@@ -239,7 +300,14 @@ function CheckoutContent() {
             </div>
           )}
 
-          {isAuthenticated ? (
+          {order ? (
+            <ShippingDetailsSummary
+              isAuthenticated={isAuthenticated}
+              receiptEmail={isAuthenticated ? user?.email ?? '' : guestForm.email}
+              guestForm={guestForm}
+              address={selectedAddress}
+            />
+          ) : isAuthenticated ? (
             <RegisteredAddressSection
               addresses={addresses}
               isLoading={isLoading}
@@ -250,10 +318,10 @@ function CheckoutContent() {
               onToggleAddressForm={() => setShowAddressForm((current) => !current)}
             />
           ) : (
-            <ShippingForm form={guestForm} onChange={setGuestForm} />
+            <ShippingForm form={guestForm} onChange={setGuestForm} phoneError={phoneError} />
           )}
 
-      <section className="rounded-lg border border-surface-200 bg-white p-4 shadow-sm">
+          <section className="rounded-lg border border-surface-200 bg-white p-4 shadow-sm">
             <h2 className="mb-3 font-display text-xl font-bold text-surface-950">Order notes</h2>
             <textarea
               value={notes}
@@ -290,6 +358,103 @@ function CheckoutContent() {
         </aside>
       </section>
     </main>
+  );
+}
+
+function ShippingDetailsSummary({
+  isAuthenticated,
+  receiptEmail,
+  guestForm,
+  address,
+}: {
+  isAuthenticated: boolean;
+  receiptEmail: string;
+  guestForm: ShippingFormState;
+  address: AddressSummary | null;
+}) {
+  const guestPhone = normalizeNigerianPhoneNumber(guestForm.phone) ?? guestForm.phone.trim();
+  const summaryItems = isAuthenticated
+    ? [
+        {
+          label: 'Recipient',
+          value: address ? `${address.firstName} ${address.lastName}` : 'Not available',
+        },
+        {
+          label: 'Phone',
+          value: address?.phone ?? 'Not available',
+        },
+        {
+          label: 'Receipt email',
+          value: receiptEmail || 'Not available',
+        },
+        {
+          label: 'Address',
+          value: address
+            ? `${address.street}, ${address.city}, ${address.state}, ${address.country}${
+                address.postalCode ? ` ${address.postalCode}` : ''
+              }`
+            : 'Not available',
+        },
+      ]
+    : [
+        {
+          label: 'Full name',
+          value: guestForm.fullName.trim() || 'Not provided',
+        },
+        {
+          label: 'Phone',
+          value: guestPhone || 'Not provided',
+        },
+        {
+          label: 'Email',
+          value: receiptEmail.trim() || 'Not provided',
+        },
+        {
+          label: 'State',
+          value: guestForm.state.trim() || 'Not provided',
+        },
+        {
+          label: 'City',
+          value: guestForm.city.trim() || 'Not provided',
+        },
+        {
+          label: 'Area / landmark',
+          value: guestForm.area.trim() || 'Not provided',
+        },
+        {
+          label: 'Preferred contact',
+          value: formatContactMethod(guestForm.preferredContactMethod),
+        },
+      ];
+
+  return (
+    <section className="rounded-lg border border-surface-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-display text-xl font-bold text-surface-950">Shipping details</h2>
+          <p className="mt-1 text-sm text-surface-500">
+            Your delivery details are locked for this payment step.
+          </p>
+          <p className="mt-2 text-sm font-medium text-primary-700">
+            Your payment receipt will be sent to {receiptEmail || 'your email address'}.
+          </p>
+        </div>
+        <span className="rounded-full bg-surface-100 px-3 py-1 text-xs font-semibold text-surface-700">
+          Read only
+        </span>
+      </div>
+
+      <dl className="mt-4 grid gap-4 sm:grid-cols-2">
+        {summaryItems.map((item) => (
+          <div key={item.label} className="rounded-lg bg-surface-50 p-3">
+            <dt className="text-xs font-semibold uppercase tracking-wide text-surface-500">
+              {item.label}
+            </dt>
+            <dd className="mt-1 text-sm font-medium leading-6 text-surface-900">{item.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }
 
@@ -351,14 +516,20 @@ function RegisteredAddressSection({
   );
 }
 
-function validateGuestForm(form: GuestFormState): string {
+function validateGuestForm(form: ShippingFormState): string {
   if (form.fullName.trim().length < 2) return 'Full name is required.';
-  if (form.phone.trim().length < 7) return 'A WhatsApp-reachable phone number is required.';
-  if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
-    return 'Enter a valid email address or leave it blank.';
-  }
+  const phoneError = getNigerianPhoneError(form.phone);
+  if (phoneError) return phoneError;
+  const emailError = getEmailError(form.email);
+  if (emailError) return emailError;
   if (form.state.trim().length < 2) return 'State is required.';
   if (form.city.trim().length < 2) return 'City is required.';
   if (form.area.trim().length < 2) return 'Area or landmark is required.';
   return '';
+}
+
+function formatContactMethod(value: ShippingFormState['preferredContactMethod']): string {
+  if (value === 'SMS') return 'SMS';
+  if (value === 'CALL') return 'Call';
+  return 'WhatsApp';
 }

@@ -5,7 +5,7 @@ interface TrustBannerProps {
 const copy = {
   payment: {
     title: 'Secure payment',
-    body: 'Pay online through Paystack. YurDeals never stores card details.',
+    body: 'Pay online through our secure payment flow. YurDeals never stores card details.',
   },
   delivery: {
     title: 'Tracked China to Nigeria flow',

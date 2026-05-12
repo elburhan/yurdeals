@@ -3,7 +3,14 @@
 // ============================================
 
 import { Router, Request, Response, NextFunction } from 'express';
-import { orderRateLimiter, requireAuth, validateBody, validateParams, validateQuery } from '../middleware';
+import {
+  orderRateLimiter,
+  requireAuth,
+  trackingLookupRateLimiter,
+  validateBody,
+  validateParams,
+  validateQuery,
+} from '../middleware';
 import { AppError } from '../middleware/errorHandler';
 import { getPaginationMeta, sendSuccess } from '../utils';
 import {
@@ -24,7 +31,6 @@ import {
 } from '../schemas/tracking.schema';
 import {
   cancelUserOrder,
-  checkoutOrder,
   createOrderFromCart,
   createGuestOrderFromCart,
   getUserOrder,
@@ -74,6 +80,7 @@ router.post(
 
 router.get(
   '/track',
+  trackingLookupRateLimiter,
   validateQuery(publicOrderTrackingQuerySchema),
   async (_req: Request, res: Response, next: NextFunction) => {
     try {
@@ -101,28 +108,6 @@ router.get(
       const query = res.locals.validatedQuery as OrderQueryInput;
       const result = await listUserOrders(req.user.id, query);
       sendSuccess(res, 200, result.data, 'Orders retrieved', getPaginationMeta(query, result.total));
-    } catch (error) {
-      next(error);
-    }
-  },
-);
-
-router.post(
-  '/checkout',
-  orderRateLimiter,
-  validateBody(createOrderSchema),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      if (!req.user) {
-        next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
-        return;
-      }
-
-      const data = await checkoutOrder(req.user.id, req.body as CreateOrderInput, {
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
-      });
-      sendSuccess(res, 201, data, 'Checkout initiated successfully');
     } catch (error) {
       next(error);
     }

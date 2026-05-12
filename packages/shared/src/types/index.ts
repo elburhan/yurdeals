@@ -1,8 +1,3 @@
-// ============================================
-// Shared Type Definitions — YurDeals
-// ============================================
-
-/** Standard API success response */
 export interface ApiResponse<T> {
   success: true;
   data: T;
@@ -10,7 +5,6 @@ export interface ApiResponse<T> {
   meta?: PaginationMeta;
 }
 
-/** Standard API error response */
 export interface ApiErrorResponse {
   success: false;
   error: {
@@ -23,7 +17,6 @@ export interface ApiErrorResponse {
   };
 }
 
-/** Pagination metadata */
 export interface PaginationMeta {
   page: number;
   limit: number;
@@ -31,7 +24,6 @@ export interface PaginationMeta {
   totalPages: number;
 }
 
-/** Pagination query parameters */
 export interface PaginationParams {
   page?: number;
   limit?: number;
@@ -39,13 +31,13 @@ export interface PaginationParams {
   sortOrder?: 'asc' | 'desc';
 }
 
-/** Health check response shape */
 export interface HealthCheckData {
   status: 'healthy' | 'degraded' | 'unhealthy';
   timestamp: string;
   version: string;
   uptime: number;
   database: 'connected' | 'disconnected';
+  environment?: string;
 }
 
 export interface CategorySummary {
@@ -56,6 +48,15 @@ export interface CategorySummary {
   image: string | null;
   parentId: string | null;
   sortOrder: number;
+  productCount?: number;
+}
+
+export interface CategoryTreeNode extends CategorySummary {
+  children: CategoryTreeNode[];
+}
+
+export interface CategoryDetail extends CategorySummary {
+  productCount: number;
 }
 
 export interface ProductImageSummary {
@@ -73,27 +74,7 @@ export interface ProductVariantSummary {
   price: number;
   stock: number;
   attributes: unknown;
-}
-
-export interface ProductListItem {
-  id: string;
-  name: string;
-  slug: string;
-  shortDesc: string | null;
-  basePrice: number;
-  currency: string;
-  stockType: 'LOCAL' | 'PREORDER';
-  isFeatured: boolean;
-  primaryImage: ProductImageSummary | null;
-  category: Pick<CategorySummary, 'id' | 'name' | 'slug'>;
-  createdAt: string;
-}
-
-export interface ProductDetail extends ProductListItem {
-  description: string;
-  images: ProductImageSummary[];
-  variants: ProductVariantSummary[];
-  preorderCampaigns: PreorderCampaignSummary[];
+  isActive?: boolean;
 }
 
 export interface PreorderCampaignSummary {
@@ -108,14 +89,62 @@ export interface PreorderCampaignSummary {
   endsAt: string;
 }
 
+export interface ProductListItem {
+  id: string;
+  name: string;
+  slug: string;
+  shortDesc: string | null;
+  basePrice: number;
+  currency: string;
+  sourceCountry: string;
+  stockType: 'IN_STOCK' | 'PREORDER';
+  approvalStatus: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
+  isPublished: boolean;
+  isFeatured: boolean;
+  isActive?: boolean;
+  inventoryQuantity: number | null;
+  preorderSlotsTotal: number | null;
+  preorderSlotsRemaining: number | null;
+  preorderStartsAt: string | null;
+  preorderEndsAt: string | null;
+  estimatedArrivalAt: string | null;
+  trendingScore: number;
+  salesVelocity7d: number;
+  salesVelocity30d: number;
+  unitsSoldTotal: number;
+  primaryImage: ProductImageSummary | null;
+  category: Pick<CategorySummary, 'id' | 'name' | 'slug'>;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface ProductDetail extends ProductListItem {
+  description: string;
+  images: ProductImageSummary[];
+  variants: ProductVariantSummary[];
+  preorderCampaigns: PreorderCampaignSummary[];
+  metaTitle?: string | null;
+  metaDescription?: string | null;
+  tags?: string[];
+}
+
+export interface ProductDetailData {
+  product: ProductDetail;
+  relatedProducts: ProductListItem[];
+}
+
 export interface ProductCatalogFilters {
+  category?: string;
   category_id?: string;
   search?: string;
+  stockType?: 'IN_STOCK' | 'PREORDER';
   preorder?: boolean;
   available_in_nigeria?: boolean;
+  isFeatured?: boolean;
+  isPublished?: boolean;
   min_price?: number;
   max_price?: number;
-  sort?: 'newest' | 'price_asc' | 'price_desc' | 'featured' | 'name_asc';
+  sort?: 'newest' | 'price' | 'price_asc' | 'price_desc' | 'featured' | 'name_asc' | 'trending';
   page?: number;
   limit?: number;
 }
@@ -126,6 +155,12 @@ export interface ProductListData {
 
 export interface CategoryListData {
   categories: CategorySummary[];
+  flat: CategorySummary[];
+  tree: CategoryTreeNode[];
+}
+
+export interface CategoryDetailData {
+  category: CategoryDetail;
 }
 
 export interface HomeCatalogData {
@@ -138,8 +173,9 @@ export interface CartProductSummary {
   id: string;
   name: string;
   slug: string;
-  stockType: 'LOCAL' | 'PREORDER';
+  stockType: 'IN_STOCK' | 'PREORDER';
   currency: string;
+  sourceCountry?: string;
   primaryImage: ProductImageSummary | null;
 }
 
@@ -209,12 +245,25 @@ export interface OrderItemSummary {
   price: number;
   quantity: number;
   total: number;
+  stockTypeSnapshot?: 'IN_STOCK' | 'PREORDER';
+  inspectionRequired?: boolean;
 }
 
 export interface OrderSummary {
   id: string;
   orderNumber: string;
-  status: string;
+  status:
+    | 'PENDING'
+    | 'PAID'
+    | 'PROCESSING'
+    | 'INSPECTION_PENDING'
+    | 'INSPECTION_PASSED'
+    | 'SHIPPED'
+    | 'IN_TRANSIT'
+    | 'DELIVERED'
+    | 'CANCELLED';
+  inspectionStatus?: 'NOT_REQUIRED' | 'PENDING' | 'IN_PROGRESS' | 'PASSED' | 'FAILED';
+  paymentReference?: string | null;
   subtotal: number;
   shippingFee: number;
   tax: number;
@@ -223,8 +272,15 @@ export interface OrderSummary {
   currency: string;
   itemCount: number;
   shippingAddress: AddressSummary | null;
+  trackingNumber?: string | null;
+  trackingCarrier?: string | null;
+  trackingUrl?: string | null;
+  paidAt?: string | null;
+  shippedAt?: string | null;
+  deliveredAt?: string | null;
   items: OrderItemSummary[];
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface OrderCreationData {
@@ -244,11 +300,22 @@ export interface PaymentSummary {
   id: string;
   orderId: string;
   provider: 'PAYSTACK' | 'FLUTTERWAVE' | 'BANK_TRANSFER';
+  status: 'PENDING' | 'AUTHORIZED' | 'SUCCESS' | 'FAILED' | 'ABANDONED' | 'REFUNDED';
+  reference: string;
   providerRef: string | null;
+  providerTransactionId: string | null;
+  authorizationUrl: string | null;
+  accessCode: string | null;
+  customerEmail: string | null;
   amount: number;
+  amountCaptured: number | null;
+  amountRefunded: number;
+  fees: number | null;
   currency: string;
-  status: 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'REFUNDED';
+  channel: string | null;
+  gatewayResponse: string | null;
   paidAt: string | null;
+  verifiedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -257,6 +324,7 @@ export interface PaymentInitiationData {
   payment: PaymentSummary;
   authorizationUrl: string;
   reference: string;
+  accessCode?: string | null;
 }
 
 export interface PaymentStatusData {
@@ -292,6 +360,17 @@ export interface OrderTrackingData {
   timeline: TrackingTimelineEvent[];
 }
 
+export interface PublicOrderTrackingData {
+  orderNumber: string;
+  status: string;
+  paymentStatus: string | null;
+  shipmentStatus: string | null;
+  eta: string | null;
+  itemCount: number;
+  itemSummary: string[];
+  tracking: OrderTrackingData;
+}
+
 export interface AdminProductSummary {
   id: string;
   name: string;
@@ -300,10 +379,21 @@ export interface AdminProductSummary {
   categoryName: string;
   basePrice: number;
   currency: string;
-  stockType: 'LOCAL' | 'PREORDER';
+  sourceCountry: string;
+  stockType: 'IN_STOCK' | 'PREORDER';
+  approvalStatus: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
+  isPublished: boolean;
   isFeatured: boolean;
   isActive: boolean;
+  inventoryQuantity: number | null;
+  preorderSlotsTotal: number | null;
+  preorderSlotsRemaining: number | null;
+  preorderStartsAt: string | null;
+  preorderEndsAt: string | null;
+  estimatedArrivalAt: string | null;
+  trendingScore: number;
   primaryImage: ProductImageSummary | null;
+  images: ProductImageSummary[];
   createdAt: string;
   updatedAt: string;
 }
@@ -318,11 +408,16 @@ export interface AdminOrderListItem {
   checkoutMethod: 'ONLINE' | 'WHATSAPP';
   customerType: 'REGISTERED' | 'GUEST';
   status: string;
+  inspectionStatus?: string;
   total: number;
   currency: string;
   customerName: string;
   customerEmail: string;
+  customerPhone: string | null;
+  deliveryAddressShort: string | null;
+  deliveryState: string | null;
   itemCount: number;
+  paymentReference?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -331,15 +426,75 @@ export interface AdminOrderListData {
   orders: AdminOrderListItem[];
 }
 
+export interface AdminPaymentAttemptSummary {
+  id: string;
+  provider: 'PAYSTACK' | 'FLUTTERWAVE' | 'BANK_TRANSFER';
+  status: 'PENDING' | 'AUTHORIZED' | 'SUCCESS' | 'FAILED' | 'ABANDONED' | 'REFUNDED';
+  amount: number;
+  amountCaptured: number | null;
+  amountRefunded: number;
+  fees: number | null;
+  currency: string;
+  reference: string;
+  providerRef: string | null;
+  providerTransactionId: string | null;
+  customerEmail: string | null;
+  channel: string | null;
+  gatewayResponse: string | null;
+  hasAuthorizationUrl: boolean;
+  hasAccessCode: boolean;
+  paidAt: string | null;
+  verifiedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminPaymentEventSummary {
+  id: string;
+  paymentId: string;
+  provider: 'PAYSTACK' | 'FLUTTERWAVE' | 'BANK_TRANSFER';
+  eventType: string;
+  eventId: string | null;
+  providerReference: string;
+  providerRef: string | null;
+  status: 'PENDING' | 'AUTHORIZED' | 'SUCCESS' | 'FAILED' | 'ABANDONED' | 'REFUNDED';
+  amountMatched: boolean | null;
+  currencyMatched: boolean | null;
+  providerTransactionId: string | null;
+  channel: string | null;
+  gatewayMessage: string | null;
+  paidAt: string | null;
+  receivedAt: string;
+}
+
+export interface AdminInventoryReservationSummary {
+  id: string;
+  orderItemId: string;
+  productId: string;
+  variantId: string | null;
+  stockType: 'IN_STOCK' | 'PREORDER';
+  quantity: number;
+  status: 'ACTIVE' | 'CONFIRMED' | 'RELEASED' | 'EXPIRED';
+  expiresAt: string;
+  confirmedAt: string | null;
+  releasedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AdminOrderDetailData {
   order: OrderSummary & {
+    checkoutMethod: 'ONLINE' | 'WHATSAPP';
+    customerType: 'REGISTERED' | 'GUEST';
     customer: {
       id: string;
       name: string;
       email: string;
       phone: string | null;
     };
-    payments: PaymentSummary[];
+    payments: AdminPaymentAttemptSummary[];
+    paymentEvents: AdminPaymentEventSummary[];
+    reservations: AdminInventoryReservationSummary[];
   };
 }
 
@@ -372,7 +527,8 @@ export interface AdminOverviewData {
   orders: {
     total: number;
     pending: number;
-    confirmed: number;
+    paid?: number;
+    processing: number;
     inTransit: number;
     delivered: number;
   };
@@ -385,5 +541,50 @@ export interface AdminOverviewData {
   products: {
     total: number;
     active: number;
+    published?: number;
+    preorder?: number;
   };
+}
+
+export interface BlogCategorySummary {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  isActive: boolean;
+}
+
+export interface BlogPostListItem {
+  id: string;
+  title: string;
+  slug: string;
+  excerpt: string;
+  coverImage: string | null;
+  tags: string[];
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+  views: number;
+  featured: boolean;
+  readingTimeMins: number | null;
+  publishedAt: string | null;
+  authorName: string | null;
+  category: BlogCategorySummary | null;
+}
+
+export interface BlogPostDetail extends BlogPostListItem {
+  content: string;
+  seoTitle: string | null;
+  seoDescription: string | null;
+}
+
+export interface BlogPostListData {
+  posts: BlogPostListItem[];
+}
+
+export interface BlogPostDetailData {
+  post: BlogPostDetail;
+  relatedPosts: BlogPostListItem[];
+}
+
+export interface BlogCategoryListData {
+  categories: BlogCategorySummary[];
 }
