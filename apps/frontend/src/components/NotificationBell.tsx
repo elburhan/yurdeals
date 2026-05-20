@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { NotificationSummary } from '@yurdeals/shared';
 import { useAuth } from '../hooks/useAuth';
-import { getNotifications } from '../lib/notificationApi';
+import { getNotifications, markAllNotificationsRead } from '../lib/notificationApi';
 
 export function NotificationBell() {
   const { isAuthenticated } = useAuth();
@@ -16,7 +16,8 @@ export function NotificationBell() {
     }
 
     let isMounted = true;
-    getNotifications()
+    function loadNotifications() {
+      getNotifications()
       .then((response) => {
         if (isMounted) {
           setNotifications(response.data.notifications);
@@ -28,9 +29,14 @@ export function NotificationBell() {
           setError(requestError.message);
         }
       });
+    }
+
+    loadNotifications();
+    const intervalId = window.setInterval(loadNotifications, 60000);
 
     return () => {
       isMounted = false;
+      window.clearInterval(intervalId);
     };
   }, [isAuthenticated]);
 
@@ -51,11 +57,30 @@ export function NotificationBell() {
 
   const unreadCount = notifications.filter((notification) => !notification.isRead).length;
 
+  function handleToggleNotifications() {
+    const nextIsOpen = !isOpen;
+    setIsOpen(nextIsOpen);
+
+    if (!nextIsOpen || unreadCount === 0) {
+      return;
+    }
+
+    const previousNotifications = notifications;
+    setNotifications((currentNotifications) =>
+      currentNotifications.map((notification) => ({ ...notification, isRead: true })),
+    );
+
+    markAllNotificationsRead().catch((requestError: Error) => {
+      setNotifications(previousNotifications);
+      setError(requestError.message);
+    });
+  }
+
   return (
     <div ref={panelRef} className="relative">
       <button
         type="button"
-        onClick={() => setIsOpen((current) => !current)}
+        onClick={handleToggleNotifications}
         className="relative min-h-11 rounded-full border border-surface-200 px-4 text-sm font-semibold text-surface-700 hover:border-primary-300 hover:text-primary-700"
         aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
         aria-expanded={isOpen}
@@ -92,7 +117,11 @@ export function NotificationBell() {
             {notifications.map((notification) => (
               <article
                 key={notification.id}
-                className="rounded-lg border border-surface-100 bg-surface-50 p-3"
+                className={
+                  notification.isRead
+                    ? 'rounded-lg border border-surface-100 bg-surface-50 p-3'
+                    : 'rounded-lg border border-primary-100 bg-primary-50 p-3'
+                }
               >
                 <h3 className="text-sm font-semibold text-surface-950">{notification.title}</h3>
                 <p className="mt-1 line-clamp-2 text-xs text-surface-600">

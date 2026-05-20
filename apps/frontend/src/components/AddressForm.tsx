@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import type { AddressSummary } from '@yurdeals/shared';
+import { getNigeriaLgas, NIGERIA_STATE_NAMES, type AddressSummary } from '@yurdeals/shared';
 import type { AddressPayload } from '../lib/addressApi';
 
 interface AddressFormProps {
@@ -23,11 +23,16 @@ export function AddressForm({
     street: initialAddress?.street ?? '',
     city: initialAddress?.city ?? '',
     state: initialAddress?.state ?? '',
+    lga: initialAddress?.lga ?? '',
+    area: initialAddress?.area ?? '',
+    landmark: initialAddress?.landmark ?? '',
     country: initialAddress?.country ?? 'Nigeria',
     postal_code: initialAddress?.postalCode ?? '',
+    delivery_notes: initialAddress?.deliveryNotes ?? '',
     is_default: initialAddress?.isDefault ?? false,
   });
   const [error, setError] = useState('');
+  const lgas = getNigeriaLgas(form.state);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -38,6 +43,7 @@ export function AddressForm({
         ...form,
         label: form.label?.trim() || undefined,
         postal_code: form.postal_code?.trim() || undefined,
+        delivery_notes: form.delivery_notes?.trim() || undefined,
       });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Unable to save address');
@@ -88,38 +94,76 @@ export function AddressForm({
         />
       </div>
 
-      <Field
-        label="Street"
-        value={form.street}
-        onChange={(value) => updateField('street', value)}
-        required
-      />
-
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <SelectField
+          label="State"
+          value={form.state}
+          options={NIGERIA_STATE_NAMES}
+          placeholder="Select state"
+          onChange={(value) => setForm((current) => ({ ...current, state: value, lga: '' }))}
+          required
+        />
+        <SelectField
+          label="LGA"
+          value={form.lga}
+          options={lgas}
+          placeholder={form.state ? 'Select LGA' : 'Select state first'}
+          onChange={(value) => updateField('lga', value)}
+          disabled={!form.state}
+          required
+        />
         <Field
-          label="City"
+          label="City / town"
           value={form.city}
           onChange={(value) => updateField('city', value)}
           required
         />
         <Field
-          label="State"
-          value={form.state}
-          onChange={(value) => updateField('state', value)}
+          label="Area / district"
+          value={form.area}
+          onChange={(value) => updateField('area', value)}
           required
         />
+      </div>
+
+      <Field
+        label="Street address"
+        value={form.street}
+        onChange={(value) => updateField('street', value)}
+        required
+      />
+
+      <Field
+        label="Landmark"
+        value={form.landmark}
+        helperText="Nearest bus stop, junction, plaza, mosque, filling station, or known building."
+        onChange={(value) => updateField('landmark', value)}
+        required
+      />
+
+      <div className="grid gap-3 sm:grid-cols-2">
         <Field
           label="Postal code"
           value={form.postal_code ?? ''}
           onChange={(value) => updateField('postal_code', value)}
         />
+        <Field
+          label="Country"
+          value={form.country ?? 'Nigeria'}
+          onChange={(value) => updateField('country', value)}
+        />
       </div>
 
-      <Field
-        label="Country"
-        value={form.country ?? 'Nigeria'}
-        onChange={(value) => updateField('country', value)}
-      />
+      <label className="block text-sm font-medium text-surface-700">
+        <span>Delivery notes</span>
+        <textarea
+          value={form.delivery_notes ?? ''}
+          maxLength={240}
+          rows={3}
+          onChange={(event) => updateField('delivery_notes', event.target.value)}
+          className="mt-1 w-full rounded-lg border border-surface-300 px-3 py-2 text-base focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200 sm:text-sm"
+        />
+      </label>
 
       <label className="flex min-h-12 items-center gap-3 text-sm font-medium text-surface-700">
         <input
@@ -157,10 +201,11 @@ interface FieldProps {
   label: string;
   value: string;
   required?: boolean;
+  helperText?: string;
   onChange: (value: string) => void;
 }
 
-function Field({ label, value, required = false, onChange }: FieldProps) {
+function Field({ label, value, required = false, helperText, onChange }: FieldProps) {
   const id = label.toLowerCase().replace(/\s+/g, '-');
 
   return (
@@ -173,6 +218,50 @@ function Field({ label, value, required = false, onChange }: FieldProps) {
         onChange={(event) => onChange(event.target.value)}
         className="mt-1 min-h-12 w-full rounded-lg border border-surface-300 px-3 text-base focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200 sm:text-sm"
       />
+      {helperText ? <span className="mt-1 block text-xs text-surface-500">{helperText}</span> : null}
+    </label>
+  );
+}
+
+interface SelectFieldProps {
+  label: string;
+  value: string;
+  options: string[];
+  placeholder: string;
+  required?: boolean;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}
+
+function SelectField({
+  label,
+  value,
+  options,
+  placeholder,
+  required = false,
+  disabled = false,
+  onChange,
+}: SelectFieldProps) {
+  const id = label.toLowerCase().replace(/\s+/g, '-');
+
+  return (
+    <label htmlFor={id} className="block text-sm font-medium text-surface-700">
+      <span>{label}</span>
+      <select
+        id={id}
+        required={required}
+        disabled={disabled}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1 min-h-12 w-full rounded-lg border border-surface-300 px-3 text-base focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200 disabled:bg-surface-100 sm:text-sm"
+      >
+        <option value="">{placeholder}</option>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }

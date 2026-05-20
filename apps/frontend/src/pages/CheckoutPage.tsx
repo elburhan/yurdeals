@@ -22,6 +22,7 @@ import { useCart } from '../hooks/useCart';
 import { useToast } from '../context/ToastContext';
 import { createAddress, getAddresses, type AddressPayload } from '../lib/addressApi';
 import { createGuestOrder, createOrder } from '../lib/orderApi';
+import { getDeliveryEstimate, inferDeliveryStockType } from '../lib/deliveryEstimate';
 
 const GUEST_CHECKOUT_STORAGE_KEY = 'yurdeals_guest_checkout_form';
 
@@ -30,8 +31,12 @@ const emptyGuestForm: ShippingFormState = {
   phone: '',
   email: '',
   state: '',
+  lga: '',
   city: '',
   area: '',
+  street: '',
+  landmark: '',
+  deliveryNotes: '',
   preferredContactMethod: 'WHATSAPP',
 };
 
@@ -189,8 +194,12 @@ function CheckoutContent() {
             phone: normalizedPhone,
             email: guestForm.email.trim().toLowerCase(),
             state: guestForm.state.trim(),
+            lga: guestForm.lga.trim(),
             city: guestForm.city.trim(),
             area: guestForm.area.trim(),
+            street: guestForm.street.trim(),
+            landmark: guestForm.landmark.trim(),
+            delivery_notes: guestForm.deliveryNotes.trim() || undefined,
             preferred_contact_method: guestForm.preferredContactMethod,
           },
           items: items.map((item) => ({
@@ -217,6 +226,10 @@ function CheckoutContent() {
   const items = cart?.items ?? [];
   const currentStep = order ? 3 : isAuthenticated ? 2 : 2;
   const phoneError = !isAuthenticated && error.includes('phone number') ? getNigerianPhoneError(guestForm.phone) : '';
+  const checkoutStockType = order
+    ? inferDeliveryStockType(order.items.map((item) => item.stockTypeSnapshot))
+    : inferDeliveryStockType(items.map((item) => item.product.stockType));
+  const deliveryEstimate = getDeliveryEstimate(checkoutStockType);
   const selectedAddress =
     order?.shippingAddress ??
     addresses.find((address) => address.id === selectedAddressId) ??
@@ -257,9 +270,18 @@ function CheckoutContent() {
             ) : (
               <div className="mt-4 space-y-3">
                 {items.map((item) => (
+                  // Checkout keeps item-level timing tied to stock type so mixed carts remain clear.
                   <div key={item.id} className="flex justify-between gap-3 text-sm">
                     <span className="min-w-0 text-surface-600">
                       {item.quantity} x {item.product.name}
+                      <span
+                        className={`mt-1 flex items-center gap-2 text-xs font-semibold ${
+                          getDeliveryEstimate(item.product.stockType).textClassName
+                        }`}
+                      >
+                        <span aria-hidden="true">{getDeliveryEstimate(item.product.stockType).icon}</span>
+                        <span>{getDeliveryEstimate(item.product.stockType).shortLabel}</span>
+                      </span>
                     </span>
                     <span className="font-medium text-surface-950">
                       {formatPrice(item.lineTotal, item.currency)}
@@ -268,9 +290,13 @@ function CheckoutContent() {
                 ))}
               </div>
             )}
-            <p className="mt-4 rounded-lg bg-emerald-50 p-3 text-sm font-medium text-emerald-700">
-              Estimated delivery: 25-40 days after order confirmation.
-            </p>
+            <div className={`mt-4 rounded-2xl border p-3 text-sm ${deliveryEstimate.panelClassName}`}>
+              <p className={`inline-flex items-center gap-2 font-semibold ${deliveryEstimate.textClassName}`}>
+                <span aria-hidden="true">{deliveryEstimate.icon}</span>
+                <span>{deliveryEstimate.label}</span>
+              </p>
+              <p className={`mt-1 ${deliveryEstimate.textClassName}`}>{deliveryEstimate.note}</p>
+            </div>
           </section>
 
           {error && (
@@ -342,6 +368,7 @@ function CheckoutContent() {
               itemCount={cart?.summary.itemCount ?? 0}
               subtotal={cart?.summary.subtotal ?? 0}
               currency={cart?.summary.currency ?? 'NGN'}
+              stockType={deliveryEstimate.stockType}
             />
           )}
           <button
@@ -389,11 +416,11 @@ function ShippingDetailsSummary({
         },
         {
           label: 'Address',
-          value: address
-            ? `${address.street}, ${address.city}, ${address.state}, ${address.country}${
-                address.postalCode ? ` ${address.postalCode}` : ''
-              }`
-            : 'Not available',
+          value: address ? formatDeliveryAddress(address) : 'Not available',
+        },
+        {
+          label: 'Landmark',
+          value: address?.landmark ?? 'Not provided',
         },
       ]
     : [
@@ -414,12 +441,24 @@ function ShippingDetailsSummary({
           value: guestForm.state.trim() || 'Not provided',
         },
         {
-          label: 'City',
+          label: 'LGA',
+          value: guestForm.lga.trim() || 'Not provided',
+        },
+        {
+          label: 'City / town',
           value: guestForm.city.trim() || 'Not provided',
         },
         {
-          label: 'Area / landmark',
+          label: 'Area / district',
           value: guestForm.area.trim() || 'Not provided',
+        },
+        {
+          label: 'Street address',
+          value: guestForm.street.trim() || 'Not provided',
+        },
+        {
+          label: 'Landmark',
+          value: guestForm.landmark.trim() || 'Not provided',
         },
         {
           label: 'Preferred contact',
@@ -523,9 +562,26 @@ function validateGuestForm(form: ShippingFormState): string {
   const emailError = getEmailError(form.email);
   if (emailError) return emailError;
   if (form.state.trim().length < 2) return 'State is required.';
+  if (form.lga.trim().length < 2) return 'LGA is required.';
   if (form.city.trim().length < 2) return 'City is required.';
-  if (form.area.trim().length < 2) return 'Area or landmark is required.';
+  if (form.area.trim().length < 3) return 'Area or district is required.';
+  if (form.street.trim().length < 5) return 'Street address is required.';
+  if (form.landmark.trim().length < 8) return 'Add a clear nearby landmark for delivery.';
   return '';
+}
+
+function formatDeliveryAddress(address: AddressSummary): string {
+  return [
+    address.street,
+    address.area,
+    address.city,
+    address.lga,
+    address.state,
+    address.country,
+    address.postalCode,
+  ]
+    .filter(Boolean)
+    .join(', ');
 }
 
 function formatContactMethod(value: ShippingFormState['preferredContactMethod']): string {

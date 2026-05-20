@@ -2,7 +2,7 @@
 // Admin Order Repository
 // ============================================
 
-import { OrderStatus, Prisma, ShipmentStatus } from '@prisma/client';
+import { FraudRiskLevel, OrderStatus, Prisma, ShipmentStatus } from '@prisma/client';
 import {
   AdminOrderDetailData,
   AdminInventoryReservationSummary,
@@ -23,6 +23,8 @@ const ADMIN_ORDER_LIST_SELECT = {
   orderNumber: true,
   status: true,
   inspectionStatus: true,
+  riskLevel: true,
+  holdForManualReview: true,
   paymentReference: true,
   total: true,
   currency: true,
@@ -42,6 +44,9 @@ const ADMIN_ORDER_LIST_SELECT = {
       street: true,
       city: true,
       state: true,
+      lga: true,
+      area: true,
+      landmark: true,
       country: true,
     },
   },
@@ -57,6 +62,12 @@ const ADMIN_ORDER_DETAIL_SELECT = {
   orderNumber: true,
   status: true,
   inspectionStatus: true,
+  riskLevel: true,
+  riskFlags: true,
+  riskReviewedAt: true,
+  riskReviewedBy: true,
+  holdForManualReview: true,
+  fraudNotes: true,
   paymentReference: true,
   subtotal: true,
   shippingFee: true,
@@ -82,6 +93,13 @@ const ADMIN_ORDER_DETAIL_SELECT = {
       phone: true,
     },
   },
+  riskReviewer: {
+    select: {
+      firstName: true,
+      lastName: true,
+      email: true,
+    },
+  },
   shippingAddress: {
     select: {
       id: true,
@@ -92,8 +110,12 @@ const ADMIN_ORDER_DETAIL_SELECT = {
       street: true,
       city: true,
       state: true,
+      lga: true,
+      area: true,
+      landmark: true,
       country: true,
       postalCode: true,
+      deliveryNotes: true,
       isDefault: true,
       createdAt: true,
       updatedAt: true,
@@ -222,6 +244,47 @@ export class AdminOrderRepository {
     return { order: mapAdminOrderDetail(order) };
   }
 
+  async findOrderRiskGate(orderId: string): Promise<{
+    orderNumber: string;
+    holdForManualReview: boolean;
+    riskLevel: FraudRiskLevel;
+  } | null> {
+    return prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        orderNumber: true,
+        holdForManualReview: true,
+        riskLevel: true,
+      },
+    });
+  }
+
+  async updateOrderRiskReview(
+    orderId: string,
+    input: {
+      holdForManualReview?: boolean;
+      fraudNotes?: string | null;
+      riskLevelOverride?: FraudRiskLevel;
+      reviewedByUserId: string;
+    },
+  ): Promise<AdminOrderDetailData> {
+    const order = await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        ...(input.holdForManualReview !== undefined
+          ? { holdForManualReview: input.holdForManualReview }
+          : {}),
+        ...(input.fraudNotes !== undefined ? { fraudNotes: input.fraudNotes } : {}),
+        ...(input.riskLevelOverride ? { riskLevel: input.riskLevelOverride } : {}),
+        riskReviewedAt: new Date(),
+        riskReviewedBy: input.reviewedByUserId,
+      },
+      select: ADMIN_ORDER_DETAIL_SELECT,
+    });
+
+    return { order: mapAdminOrderDetail(order) };
+  }
+
   async getOverview(): Promise<AdminOverviewData> {
     const [
       totalOrders,
@@ -311,13 +374,15 @@ function mapAdminOrderListItem(order: AdminOrderListRecord): AdminOrderListItem 
     customerType: order.notes?.includes(GUEST_CUSTOMER_NOTE_TAG) ? 'GUEST' : 'REGISTERED',
     status: order.status,
     inspectionStatus: order.inspectionStatus,
+    riskLevel: order.riskLevel,
+    holdForManualReview: order.holdForManualReview,
     total: Number(order.total),
     currency: order.currency,
     customerName: `${order.user.firstName} ${order.user.lastName}`,
     customerEmail: order.user.email,
     customerPhone: order.user.phone ?? null,
     deliveryAddressShort: order.shippingAddress
-      ? [order.shippingAddress.street, order.shippingAddress.city]
+      ? [order.shippingAddress.street, order.shippingAddress.area, order.shippingAddress.city]
           .filter(Boolean)
           .join(', ')
       : null,
@@ -337,6 +402,15 @@ function mapAdminOrderDetail(order: AdminOrderDetailRecord): AdminOrderDetailDat
     orderNumber: order.orderNumber,
     status: order.status,
     inspectionStatus: order.inspectionStatus,
+    riskLevel: order.riskLevel,
+    riskFlags: order.riskFlags,
+    riskReviewedAt: order.riskReviewedAt?.toISOString() ?? null,
+    riskReviewedBy: order.riskReviewedBy ?? null,
+    riskReviewedByName: order.riskReviewer
+      ? `${order.riskReviewer.firstName} ${order.riskReviewer.lastName}`.trim() || order.riskReviewer.email
+      : null,
+    holdForManualReview: order.holdForManualReview,
+    fraudNotes: order.fraudNotes,
     paymentReference: order.paymentReference,
     subtotal: Number(order.subtotal),
     shippingFee: Number(order.shippingFee),
@@ -355,8 +429,12 @@ function mapAdminOrderDetail(order: AdminOrderDetailRecord): AdminOrderDetailDat
           street: order.shippingAddress.street,
           city: order.shippingAddress.city,
           state: order.shippingAddress.state,
+          lga: order.shippingAddress.lga,
+          area: order.shippingAddress.area,
+          landmark: order.shippingAddress.landmark,
           country: order.shippingAddress.country,
           postalCode: order.shippingAddress.postalCode,
+          deliveryNotes: order.shippingAddress.deliveryNotes,
           isDefault: order.shippingAddress.isDefault,
           createdAt: order.shippingAddress.createdAt.toISOString(),
           updatedAt: order.shippingAddress.updatedAt.toISOString(),

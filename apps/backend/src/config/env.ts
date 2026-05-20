@@ -18,6 +18,7 @@ interface EnvConfig {
   JWT_ACCESS_EXPIRES_IN_SECONDS: number;
   JWT_REFRESH_EXPIRES_IN_SECONDS: number;
   COOKIE_SECRET: string;
+  COOKIE_SAME_SITE: 'lax' | 'strict' | 'none';
   CORS_ORIGIN: string;
   FRONTEND_URL: string;
   RATE_LIMIT_WINDOW_MS: number;
@@ -28,10 +29,25 @@ interface EnvConfig {
   ORDER_RATE_LIMIT_MAX_REQUESTS: number;
   PAYMENT_RATE_LIMIT_WINDOW_MS: number;
   PAYMENT_RATE_LIMIT_MAX_REQUESTS: number;
+  PAYMENT_RECONCILIATION_THRESHOLD_MINUTES: number;
+  PAYMENT_RECONCILIATION_BATCH_SIZE: number;
   ADMIN_RATE_LIMIT_WINDOW_MS: number;
   ADMIN_RATE_LIMIT_MAX_REQUESTS: number;
   WEBHOOK_RATE_LIMIT_WINDOW_MS: number;
   WEBHOOK_RATE_LIMIT_MAX_REQUESTS: number;
+  RISK_MEDIUM_ORDER_TOTAL_NGN: number;
+  RISK_HIGH_ORDER_TOTAL_NGN: number;
+  RISK_EXTREME_ORDER_TOTAL_NGN: number;
+  RISK_GUEST_ELEVATED_TOTAL_NGN: number;
+  RISK_PREORDER_SPIKE_QTY_THRESHOLD: number;
+  RISK_PREORDER_SPIKE_TOTAL_QTY_THRESHOLD: number;
+  RISK_REPEATED_ORDER_LOOKBACK_MINUTES: number;
+  RISK_REPEATED_ORDER_IP_THRESHOLD: number;
+  RISK_PAYMENT_RETRY_ATTEMPTS_THRESHOLD: number;
+  RISK_FAILED_PAYMENT_ATTEMPTS_THRESHOLD: number;
+  RISK_LOW_SIGNAL_POINTS_FOR_MEDIUM: number;
+  RISK_LOW_SIGNAL_POINTS_FOR_HIGH: number;
+  RISK_MEDIUM_SIGNAL_POINTS_FOR_HIGH: number;
   PAYSTACK_SECRET_KEY: string;
   PAYSTACK_PUBLIC_KEY: string;
   PAYSTACK_CALLBACK_URL: string;
@@ -72,6 +88,20 @@ function getEnvBoolean(key: string, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
 }
 
+function getCookieSameSite(fallback: EnvConfig['COOKIE_SAME_SITE']): EnvConfig['COOKIE_SAME_SITE'] {
+  const value = process.env.COOKIE_SAME_SITE;
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'lax' || normalized === 'strict' || normalized === 'none') {
+    return normalized;
+  }
+
+  throw new Error('Environment variable COOKIE_SAME_SITE must be one of: lax, strict, none');
+}
+
 function getRequiredRuntimeEnvVar(key: string): string {
   const value = process.env[key];
   if (value) {
@@ -86,6 +116,47 @@ function getRequiredRuntimeEnvVar(key: string): string {
   throw new Error(`Missing required environment variable: ${key}`);
 }
 
+function getOptionalRuntimeEnvVar(key: string): string {
+  return process.env[key]?.trim() ?? '';
+}
+
+function getConditionalRuntimeEnvVars(
+  keys: string[],
+  activationKeys: string[] = keys,
+): Record<string, string> {
+  const values = Object.fromEntries(keys.map((key) => [key, getOptionalRuntimeEnvVar(key)]));
+  const isEnabled = activationKeys.some((key) => (values[key] ?? '').length > 0);
+
+  if (!isEnabled) {
+    return Object.fromEntries(keys.map((key) => [key, '']));
+  }
+
+  const missingKeys = Object.entries(values)
+    .filter(([, value]) => value.length === 0)
+    .map(([key]) => key);
+
+  if (missingKeys.length > 0) {
+    throw new Error(
+      `Incomplete optional provider configuration. Set all or none of: ${keys.join(', ')}. Missing: ${missingKeys.join(
+        ', ',
+      )}`,
+    );
+  }
+
+  return values;
+}
+
+const flutterwaveConfig = getConditionalRuntimeEnvVars([
+  'FLUTTERWAVE_SECRET_KEY',
+  'FLUTTERWAVE_PUBLIC_KEY',
+  'FLUTTERWAVE_WEBHOOK_SECRET_HASH',
+  'FLUTTERWAVE_CALLBACK_URL',
+], [
+  'FLUTTERWAVE_SECRET_KEY',
+  'FLUTTERWAVE_PUBLIC_KEY',
+  'FLUTTERWAVE_WEBHOOK_SECRET_HASH',
+]);
+
 export const env: EnvConfig = {
   NODE_ENV: getEnvVar('NODE_ENV', 'development') as EnvConfig['NODE_ENV'],
   PORT: getEnvInt('PORT', 4000),
@@ -95,6 +166,7 @@ export const env: EnvConfig = {
   JWT_ACCESS_EXPIRES_IN_SECONDS: getEnvInt('JWT_ACCESS_EXPIRES_IN_SECONDS', 900),
   JWT_REFRESH_EXPIRES_IN_SECONDS: getEnvInt('JWT_REFRESH_EXPIRES_IN_SECONDS', 604800),
   COOKIE_SECRET: getEnvVar('COOKIE_SECRET'),
+  COOKIE_SAME_SITE: getCookieSameSite(process.env.NODE_ENV === 'production' ? 'none' : 'lax'),
   CORS_ORIGIN: getEnvVar('CORS_ORIGIN', 'http://localhost:5173'),
   FRONTEND_URL: getEnvVar('FRONTEND_URL', 'http://localhost:5173'),
   RATE_LIMIT_WINDOW_MS: getEnvInt('RATE_LIMIT_WINDOW_MS', 60000),
@@ -105,17 +177,32 @@ export const env: EnvConfig = {
   ORDER_RATE_LIMIT_MAX_REQUESTS: getEnvInt('ORDER_RATE_LIMIT_MAX_REQUESTS', 60),
   PAYMENT_RATE_LIMIT_WINDOW_MS: getEnvInt('PAYMENT_RATE_LIMIT_WINDOW_MS', 60000),
   PAYMENT_RATE_LIMIT_MAX_REQUESTS: getEnvInt('PAYMENT_RATE_LIMIT_MAX_REQUESTS', 60),
+  PAYMENT_RECONCILIATION_THRESHOLD_MINUTES: getEnvInt('PAYMENT_RECONCILIATION_THRESHOLD_MINUTES', 15),
+  PAYMENT_RECONCILIATION_BATCH_SIZE: getEnvInt('PAYMENT_RECONCILIATION_BATCH_SIZE', 50),
   ADMIN_RATE_LIMIT_WINDOW_MS: getEnvInt('ADMIN_RATE_LIMIT_WINDOW_MS', 60000),
   ADMIN_RATE_LIMIT_MAX_REQUESTS: getEnvInt('ADMIN_RATE_LIMIT_MAX_REQUESTS', 600),
   WEBHOOK_RATE_LIMIT_WINDOW_MS: getEnvInt('WEBHOOK_RATE_LIMIT_WINDOW_MS', 60000),
   WEBHOOK_RATE_LIMIT_MAX_REQUESTS: getEnvInt('WEBHOOK_RATE_LIMIT_MAX_REQUESTS', 600),
+  RISK_MEDIUM_ORDER_TOTAL_NGN: getEnvInt('RISK_MEDIUM_ORDER_TOTAL_NGN', 150000),
+  RISK_HIGH_ORDER_TOTAL_NGN: getEnvInt('RISK_HIGH_ORDER_TOTAL_NGN', 350000),
+  RISK_EXTREME_ORDER_TOTAL_NGN: getEnvInt('RISK_EXTREME_ORDER_TOTAL_NGN', 1000000),
+  RISK_GUEST_ELEVATED_TOTAL_NGN: getEnvInt('RISK_GUEST_ELEVATED_TOTAL_NGN', 150000),
+  RISK_PREORDER_SPIKE_QTY_THRESHOLD: getEnvInt('RISK_PREORDER_SPIKE_QTY_THRESHOLD', 4),
+  RISK_PREORDER_SPIKE_TOTAL_QTY_THRESHOLD: getEnvInt('RISK_PREORDER_SPIKE_TOTAL_QTY_THRESHOLD', 6),
+  RISK_REPEATED_ORDER_LOOKBACK_MINUTES: getEnvInt('RISK_REPEATED_ORDER_LOOKBACK_MINUTES', 15),
+  RISK_REPEATED_ORDER_IP_THRESHOLD: getEnvInt('RISK_REPEATED_ORDER_IP_THRESHOLD', 4),
+  RISK_PAYMENT_RETRY_ATTEMPTS_THRESHOLD: getEnvInt('RISK_PAYMENT_RETRY_ATTEMPTS_THRESHOLD', 4),
+  RISK_FAILED_PAYMENT_ATTEMPTS_THRESHOLD: getEnvInt('RISK_FAILED_PAYMENT_ATTEMPTS_THRESHOLD', 2),
+  RISK_LOW_SIGNAL_POINTS_FOR_MEDIUM: getEnvInt('RISK_LOW_SIGNAL_POINTS_FOR_MEDIUM', 2),
+  RISK_LOW_SIGNAL_POINTS_FOR_HIGH: getEnvInt('RISK_LOW_SIGNAL_POINTS_FOR_HIGH', 4),
+  RISK_MEDIUM_SIGNAL_POINTS_FOR_HIGH: getEnvInt('RISK_MEDIUM_SIGNAL_POINTS_FOR_HIGH', 2),
   PAYSTACK_SECRET_KEY: getRequiredRuntimeEnvVar('PAYSTACK_SECRET_KEY'),
   PAYSTACK_PUBLIC_KEY: getRequiredRuntimeEnvVar('PAYSTACK_PUBLIC_KEY'),
   PAYSTACK_CALLBACK_URL: getRequiredRuntimeEnvVar('PAYSTACK_CALLBACK_URL'),
-  FLUTTERWAVE_SECRET_KEY: getRequiredRuntimeEnvVar('FLUTTERWAVE_SECRET_KEY'),
-  FLUTTERWAVE_PUBLIC_KEY: getRequiredRuntimeEnvVar('FLUTTERWAVE_PUBLIC_KEY'),
-  FLUTTERWAVE_WEBHOOK_SECRET_HASH: getRequiredRuntimeEnvVar('FLUTTERWAVE_WEBHOOK_SECRET_HASH'),
-  FLUTTERWAVE_CALLBACK_URL: getRequiredRuntimeEnvVar('FLUTTERWAVE_CALLBACK_URL'),
+  FLUTTERWAVE_SECRET_KEY: flutterwaveConfig['FLUTTERWAVE_SECRET_KEY'] ?? '',
+  FLUTTERWAVE_PUBLIC_KEY: flutterwaveConfig['FLUTTERWAVE_PUBLIC_KEY'] ?? '',
+  FLUTTERWAVE_WEBHOOK_SECRET_HASH: flutterwaveConfig['FLUTTERWAVE_WEBHOOK_SECRET_HASH'] ?? '',
+  FLUTTERWAVE_CALLBACK_URL: flutterwaveConfig['FLUTTERWAVE_CALLBACK_URL'] ?? '',
   CLOUDINARY_CLOUD_NAME: getRequiredRuntimeEnvVar('CLOUDINARY_CLOUD_NAME'),
   CLOUDINARY_API_KEY: getRequiredRuntimeEnvVar('CLOUDINARY_API_KEY'),
   CLOUDINARY_API_SECRET: getRequiredRuntimeEnvVar('CLOUDINARY_API_SECRET'),
@@ -127,3 +214,9 @@ export const env: EnvConfig = {
 
 export const isProduction = env.NODE_ENV === 'production';
 export const isDevelopment = env.NODE_ENV === 'development';
+export const isFlutterwaveEnabled = Boolean(
+  env.FLUTTERWAVE_SECRET_KEY &&
+    env.FLUTTERWAVE_PUBLIC_KEY &&
+    env.FLUTTERWAVE_WEBHOOK_SECRET_HASH &&
+    env.FLUTTERWAVE_CALLBACK_URL,
+);

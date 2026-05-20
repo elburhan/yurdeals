@@ -35,6 +35,38 @@ This is the supported production path for both frontend and backend development.
 8. Backend creates a pending guest payment record and initializes Paystack
 9. Browser redirects to Paystack
 10. Callback, webhook, and manual verify paths reconcile the payment
+
+## Payment Reconciliation Recovery
+
+If webhook delivery, callback verification, or the customer browser fails, older pending Paystack
+payments are recovered by the reconciliation runner. The runner scans pending Paystack payments after
+`PAYMENT_RECONCILIATION_THRESHOLD_MINUTES`, calls Paystack transaction verify, and sends the verified
+provider result through the same idempotent payment status path used by webhook/callback handling.
+
+Safe recovery events appear in the admin payment timeline:
+
+- `payment.reconciliation_started`
+- `payment.reconciliation_verified`
+- `payment.reconciliation_failed`
+- `payment.reconciliation_released`
+
+Run manually or from a scheduled worker:
+
+```bash
+npm run payments:reconcile -w apps/backend
+```
+
+To prevent stale inventory holds from lingering after abandoned checkout attempts, also run:
+
+```bash
+npm run reservations:expire -w apps/backend
+```
+
+Admin-only endpoint:
+
+```http
+POST /api/v1/admin/payments/reconcile
+```
 11. Successful payment marks the order `PAID`
 
 ## Ownership Rules

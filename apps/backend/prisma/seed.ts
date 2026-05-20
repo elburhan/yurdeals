@@ -1,6 +1,14 @@
-import { PrismaClient, StockType, CampaignStatus } from '@prisma/client';
+import bcrypt from 'bcryptjs';
+import {
+  CampaignStatus,
+  PrismaClient,
+  ProductApprovalStatus,
+  ProductStockType,
+  UserRole,
+} from '@prisma/client';
 
 const prisma = new PrismaClient();
+const BCRYPT_COST = 12;
 
 async function main() {
   process.stdout.write('Seeding YurDeals database...\n');
@@ -73,7 +81,7 @@ async function main() {
       shortDesc: 'Fitness tracking watch for daily use.',
       categoryId: electronics.id,
       basePrice: '18500.00',
-      stockType: StockType.LOCAL,
+      stockType: ProductStockType.IN_STOCK,
       sku: 'YD-SFW-001',
       isFeatured: true,
       tags: ['watch', 'fitness', 'electronics'],
@@ -86,7 +94,7 @@ async function main() {
       shortDesc: 'Portable speaker for music and calls.',
       categoryId: electronics.id,
       basePrice: '12500.00',
-      stockType: StockType.LOCAL,
+      stockType: ProductStockType.IN_STOCK,
       sku: 'YD-PBS-001',
       isFeatured: true,
       tags: ['speaker', 'bluetooth', 'audio'],
@@ -99,7 +107,7 @@ async function main() {
       shortDesc: 'Comfortable casual sneakers.',
       categoryId: fashion.id,
       basePrice: '22000.00',
-      stockType: StockType.LOCAL,
+      stockType: ProductStockType.IN_STOCK,
       sku: 'YD-MCS-001',
       isFeatured: true,
       tags: ['shoes', 'fashion', 'sneakers'],
@@ -112,7 +120,7 @@ async function main() {
       shortDesc: 'Solar lamp with rechargeable battery.',
       categoryId: power.id,
       basePrice: '9500.00',
-      stockType: StockType.PREORDER,
+      stockType: ProductStockType.PREORDER,
       sku: 'YD-MSL-001',
       isFeatured: true,
       tags: ['solar', 'lamp', 'power'],
@@ -123,7 +131,10 @@ async function main() {
   for (const item of products) {
     const product = await prisma.product.upsert({
       where: { slug: item.slug },
-      update: {},
+      update: {
+        approvalStatus: ProductApprovalStatus.APPROVED,
+        isPublished: true,
+      },
       create: {
         name: item.name,
         slug: item.slug,
@@ -135,15 +146,24 @@ async function main() {
         sku: item.sku,
         isFeatured: item.isFeatured,
         isActive: true,
+        approvalStatus: ProductApprovalStatus.APPROVED,
+        isPublished: true,
         tags: item.tags,
       },
     });
 
     await prisma.productImage.upsert({
       where: {
-        id: `${product.id}-primary-image`,
+        productId_sortOrder: {
+          productId: product.id,
+          sortOrder: 0,
+        },
       },
-      update: {},
+      update: {
+        url: item.image,
+        alt: item.name,
+        isPrimary: true,
+      },
       create: {
         id: `${product.id}-primary-image`,
         productId: product.id,
@@ -162,13 +182,13 @@ async function main() {
         name: 'Default',
         sku: `${item.sku}-DEFAULT`,
         price: item.basePrice,
-        stock: item.stockType === StockType.LOCAL ? 20 : 0,
+        stock: item.stockType === ProductStockType.IN_STOCK ? 20 : 0,
         attributes: {},
         isActive: true,
       },
     });
 
-    if (item.stockType === StockType.PREORDER) {
+    if (item.stockType === ProductStockType.PREORDER) {
       await prisma.preorderCampaign.upsert({
         where: { id: `${product.id}-campaign` },
         update: {},
@@ -188,7 +208,63 @@ async function main() {
     }
   }
 
+  await seedAdminUser();
+
   process.stdout.write('Seed completed successfully.\n');
+}
+
+function getOptionalSeedEnv(key: string): string | undefined {
+  const value = process.env[key]?.trim();
+  return value ? value : undefined;
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+async function seedAdminUser(): Promise<void> {
+  const adminEmail = getOptionalSeedEnv('SEED_ADMIN_EMAIL');
+  const adminPassword = getOptionalSeedEnv('SEED_ADMIN_PASSWORD');
+
+  if (!adminEmail || !adminPassword) {
+    process.stdout.write(
+      'Skipping admin seed. Set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD before running db:seed to create or update an admin user.\n',
+    );
+    return;
+  }
+
+  if (adminPassword.length < 12) {
+    throw new Error('SEED_ADMIN_PASSWORD must be at least 12 characters long.');
+  }
+
+  const email = normalizeEmail(adminEmail);
+  const passwordHash = await bcrypt.hash(adminPassword, BCRYPT_COST);
+
+  await prisma.user.upsert({
+    where: { email },
+    update: {
+      passwordHash,
+      role: UserRole.ADMIN,
+      firstName: 'YurDeals',
+      lastName: 'Admin',
+      isVerified: true,
+      emailVerified: true,
+      isActive: true,
+    },
+    create: {
+      email,
+      passwordHash,
+      firstName: 'YurDeals',
+      lastName: 'Admin',
+      role: UserRole.ADMIN,
+      isVerified: true,
+      emailVerified: true,
+      isActive: true,
+    },
+    select: { id: true },
+  });
+
+  process.stdout.write(`Admin seed ensured for ${email}.\n`);
 }
 
 main()

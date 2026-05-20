@@ -65,8 +65,8 @@ export async function notifyOrderCreated(
 ): Promise<NotificationSummary | null> {
   return createAndSend(userId, {
     type: 'ORDER_CREATED',
-    title: 'Order created',
-    message: `Order ${order.orderNumber} has been created and is ready for payment.`,
+    title: 'Order received',
+    message: `Order ${order.orderNumber} has been received and is ready for payment.`,
     eventKey: `order:${order.id}:created`,
     data: { orderId: order.id, orderNumber: order.orderNumber },
     email: async (recipient) => {
@@ -93,8 +93,8 @@ export async function notifyPaymentSuccess(
 ): Promise<NotificationSummary | null> {
   return createAndSend(userId, {
     type: 'PAYMENT_SUCCESS',
-    title: 'Payment received',
-    message: `Payment for order ${order.orderNumber} was confirmed.`,
+    title: 'Payment confirmed',
+    message: `Payment for order ${order.orderNumber} was confirmed. We're preparing your order.`,
     eventKey: `order:${order.id}:payment-success`,
     data: { orderId: order.id, paymentId: payment?.id, provider: payment?.provider },
     email: async (recipient) => {
@@ -165,6 +165,13 @@ export async function notifyShipmentStatusChanged(
 export async function listNotifications(userId: string): Promise<NotificationListData> {
   const notifications = await notificationRepository.findRecentByUserId(userId, 20);
   return { notifications };
+}
+
+export async function markAllNotificationsRead(
+  userId: string,
+): Promise<{ updatedCount: number }> {
+  const updatedCount = await notificationRepository.markAllReadByUserId(userId);
+  return { updatedCount };
 }
 
 export async function sendVerificationCodeNotification(

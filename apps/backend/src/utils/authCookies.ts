@@ -7,10 +7,8 @@ import { env, isProduction } from '../config';
 
 const ACCESS_TOKEN_MAX_AGE_MS = 15 * 60 * 1000;
 const REFRESH_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const allowedOrigins = env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
-const hasCrossOriginHttpsClient = allowedOrigins.some((origin) => origin.startsWith('https://'));
-const cookieSameSite = isProduction ? ('none' as const) : ('lax' as const);
-const cookieSecure = isProduction || (cookieSameSite === 'none' && hasCrossOriginHttpsClient);
+const cookieSameSite = env.COOKIE_SAME_SITE;
+const cookieSecure = isProduction || cookieSameSite === 'none';
 
 const AUTH_COOKIE_OPTIONS = {
   httpOnly: true,

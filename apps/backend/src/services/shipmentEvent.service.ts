@@ -6,6 +6,7 @@ import { OrderStatus } from '@prisma/client';
 import { shipmentEventRepository } from '../repositories/shipmentEvent.repository';
 import { notifyOrderStatusChanged, notifyShipmentStatusChanged } from './notification.service';
 import { orderRepository } from '../repositories/order.repository';
+import { logger } from '../utils';
 
 export async function logShipmentEvent(
   orderId: string,
@@ -28,6 +29,16 @@ export async function handleOrderStatusTransition(
   const order = await orderRepository.findOrderForEvents(orderId);
 
   if (!order) {
+    return;
+  }
+
+  if (order.holdForManualReview) {
+    logger.warn('Skipping automatic fulfillment transition because order still needs internal review', {
+      orderId,
+      orderNumber: order.orderNumber,
+      status,
+      riskLevel: order.riskLevel,
+    });
     return;
   }
 

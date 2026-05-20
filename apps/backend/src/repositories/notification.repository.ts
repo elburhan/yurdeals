@@ -74,6 +74,20 @@ export class NotificationRepository {
 
     return notifications.map(mapNotification);
   }
+
+  async markAllReadByUserId(userId: string): Promise<number> {
+    const result = await prisma.notification.updateMany({
+      where: {
+        userId,
+        isRead: false,
+      },
+      data: {
+        isRead: true,
+      },
+    });
+
+    return result.count;
+  }
 }
 
 function mapNotification(notification: NotificationRecord): NotificationSummary {

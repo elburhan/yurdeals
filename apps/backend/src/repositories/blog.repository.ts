@@ -4,12 +4,19 @@
 
 import { BlogPostStatus, Prisma } from '@prisma/client';
 import {
+  AdminBlogPostDetail,
+  AdminBlogPostSummary,
   BlogCategorySummary,
   BlogPostDetail,
   BlogPostListItem,
 } from '@yurdeals/shared';
 import { prisma } from '../config';
-import { BlogQueryInput } from '../schemas/blog.schema';
+import {
+  AdminBlogPostQueryInput,
+  AdminCreateBlogPostInput,
+  AdminUpdateBlogPostInput,
+  BlogQueryInput,
+} from '../schemas/blog.schema';
 import { getPagination } from '../utils/pagination';
 
 const PUBLIC_BLOG_WHERE = {
@@ -70,15 +77,23 @@ const BLOG_ADMIN_SELECT = Prisma.validator<Prisma.BlogPostSelect>()({
   title: true,
   slug: true,
   excerpt: true,
+  coverImage: true,
+  tags: true,
   status: true,
   featured: true,
   views: true,
   readingTimeMins: true,
   publishedAt: true,
+  authorName: true,
   updatedAt: true,
   category: {
     select: BLOG_CATEGORY_SELECT,
   },
+});
+
+const BLOG_ADMIN_DETAIL_SELECT = Prisma.validator<Prisma.BlogPostSelect>()({
+  ...BLOG_POST_DETAIL_SELECT,
+  updatedAt: true,
 });
 
 type BlogPostListRecord = Prisma.BlogPostGetPayload<{
@@ -93,6 +108,10 @@ type BlogAdminRecord = Prisma.BlogPostGetPayload<{
   select: typeof BLOG_ADMIN_SELECT;
 }>;
 
+type BlogAdminDetailRecord = Prisma.BlogPostGetPayload<{
+  select: typeof BLOG_ADMIN_DETAIL_SELECT;
+}>;
+
 export interface BlogPageResult {
   posts: BlogPostListItem[];
   total: number;
@@ -101,20 +120,6 @@ export interface BlogPageResult {
 export interface PublishedPostWithRelated {
   post: BlogPostDetail;
   relatedPosts: BlogPostListItem[];
-}
-
-export interface AdminBlogPostSummary {
-  id: string;
-  title: string;
-  slug: string;
-  excerpt: string;
-  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
-  featured: boolean;
-  views: number;
-  readingTimeMins: number | null;
-  publishedAt: string | null;
-  updatedAt: string;
-  category: BlogCategorySummary | null;
 }
 
 export class BlogRepository {
@@ -231,23 +236,120 @@ export class BlogRepository {
     return mapBlogPostDetail(record);
   }
 
-  async findPostsForAdmin(limit = 20): Promise<AdminBlogPostSummary[]> {
+  async findPostsForAdmin(query: AdminBlogPostQueryInput): Promise<AdminBlogPostSummary[]> {
     const records = await prisma.blogPost.findMany({
+      where: query.status === 'all' ? undefined : { status: query.status },
       select: BLOG_ADMIN_SELECT,
       orderBy: [{ updatedAt: 'desc' }],
-      take: limit,
+      take: query.limit,
     });
 
     return records.map(mapAdminBlogPostSummary);
   }
 
-  async findPostByIdForAdmin(postId: string): Promise<AdminBlogPostSummary | null> {
+  async findPostByIdForAdmin(postId: string): Promise<AdminBlogPostDetail | null> {
     const record = await prisma.blogPost.findUnique({
       where: { id: postId },
-      select: BLOG_ADMIN_SELECT,
+      select: BLOG_ADMIN_DETAIL_SELECT,
     });
 
-    return record ? mapAdminBlogPostSummary(record) : null;
+    return record ? mapAdminBlogPostDetail(record) : null;
+  }
+
+  async createPostForAdmin(
+    input: AdminCreateBlogPostInput,
+    authorId?: string,
+  ): Promise<AdminBlogPostDetail> {
+    const categoryId = await resolveCategoryId(input);
+    const status = input.status ?? BlogPostStatus.DRAFT;
+    const content = input.content.trim();
+    const record = await prisma.blogPost.create({
+      data: {
+        title: input.title.trim(),
+        slug: input.slug ?? slugify(input.title),
+        excerpt: input.excerpt.trim(),
+        content,
+        coverImage: input.cover_image,
+        categoryId,
+        authorId,
+        status,
+        tags: input.tags ?? [],
+        featured: input.featured ?? false,
+        readingTimeMins: getReadingTimeMinutes(content),
+        seoTitle: input.seo_title,
+        seoDescription: input.seo_description,
+        publishedAt: status === BlogPostStatus.PUBLISHED ? new Date() : null,
+      },
+      select: BLOG_ADMIN_DETAIL_SELECT,
+    });
+
+    return mapAdminBlogPostDetail(record);
+  }
+
+  async updatePostForAdmin(
+    postId: string,
+    input: AdminUpdateBlogPostInput,
+  ): Promise<AdminBlogPostDetail | null> {
+    const existing = await prisma.blogPost.findUnique({
+      where: { id: postId },
+      select: { id: true, publishedAt: true, status: true },
+    });
+
+    if (!existing) {
+      return null;
+    }
+
+    const categoryId = await resolveCategoryId(input);
+    const content = input.content?.trim();
+    const status = input.status;
+    const shouldSetPublishedAt =
+      status === BlogPostStatus.PUBLISHED && existing.publishedAt === null;
+    const shouldClearPublishedAt = status === BlogPostStatus.DRAFT;
+
+    const record = await prisma.blogPost.update({
+      where: { id: postId },
+      data: {
+        ...(input.title !== undefined ? { title: input.title.trim() } : {}),
+        ...(input.slug !== undefined ? { slug: input.slug } : {}),
+        ...(input.excerpt !== undefined ? { excerpt: input.excerpt.trim() } : {}),
+        ...(content !== undefined ? { content, readingTimeMins: getReadingTimeMinutes(content) } : {}),
+        ...(input.cover_image !== undefined ? { coverImage: input.cover_image } : {}),
+        ...(categoryId !== undefined ? { categoryId } : {}),
+        ...(status !== undefined ? { status } : {}),
+        ...(input.tags !== undefined ? { tags: input.tags } : {}),
+        ...(input.featured !== undefined ? { featured: input.featured } : {}),
+        ...(input.seo_title !== undefined ? { seoTitle: input.seo_title } : {}),
+        ...(input.seo_description !== undefined ? { seoDescription: input.seo_description } : {}),
+        ...(shouldSetPublishedAt ? { publishedAt: new Date() } : {}),
+        ...(shouldClearPublishedAt ? { publishedAt: null } : {}),
+      },
+      select: BLOG_ADMIN_DETAIL_SELECT,
+    });
+
+    return mapAdminBlogPostDetail(record);
+  }
+
+  async archivePostForAdmin(postId: string): Promise<AdminBlogPostDetail | null> {
+    const existing = await prisma.blogPost.findUnique({
+      where: { id: postId },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      return null;
+    }
+
+    const record = await prisma.blogPost.update({
+      where: { id: postId },
+      data: {
+        status: BlogPostStatus.ARCHIVED,
+        publishedAt: null,
+        featured: false,
+      },
+      select: BLOG_ADMIN_DETAIL_SELECT,
+    });
+
+    return mapAdminBlogPostDetail(record);
   }
 }
 
@@ -349,19 +451,69 @@ function mapAdminBlogPostSummary(record: BlogAdminRecord): AdminBlogPostSummary 
     title: record.title,
     slug: record.slug,
     excerpt: record.excerpt,
+    coverImage: record.coverImage,
+    tags: record.tags,
     status: record.status,
     featured: record.featured,
     views: record.views,
-    readingTimeMins: record.readingTimeMins,
+    readingTimeMins: record.readingTimeMins ?? getReadingTimeMinutes(record.excerpt),
     publishedAt: record.publishedAt?.toISOString() ?? null,
+    authorName: record.authorName,
     updatedAt: record.updatedAt.toISOString(),
     category: record.category ? mapBlogCategorySummary(record.category) : null,
+  };
+}
+
+function mapAdminBlogPostDetail(record: BlogAdminDetailRecord): AdminBlogPostDetail {
+  return {
+    ...mapBlogPostDetail(record),
+    updatedAt: record.updatedAt.toISOString(),
   };
 }
 
 function getReadingTimeMinutes(content: string): number {
   const wordCount = content.trim().split(/\s+/).filter(Boolean).length;
   return Math.max(1, Math.ceil(wordCount / 200));
+}
+
+async function resolveCategoryId(input: {
+  category_id?: string;
+  category_name?: string;
+}): Promise<string | undefined> {
+  if (input.category_id) {
+    return input.category_id;
+  }
+
+  const categoryName = input.category_name?.trim();
+  if (!categoryName) {
+    return undefined;
+  }
+
+  const category = await prisma.blogCategory.upsert({
+    where: { slug: slugify(categoryName) },
+    update: {
+      name: categoryName,
+      isActive: true,
+    },
+    create: {
+      name: categoryName,
+      slug: slugify(categoryName),
+      isActive: true,
+    },
+    select: { id: true },
+  });
+
+  return category.id;
+}
+
+function slugify(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  return slug || `guide-${Date.now().toString(36)}`;
 }
 
 export const blogRepository = new BlogRepository();

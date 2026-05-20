@@ -26,6 +26,7 @@ const CART_SELECT = {
           name: true,
           slug: true,
           stockType: true,
+          isSoldOut: true,
           inventoryQuantity: true,
           preorderSlotsRemaining: true,
           preorderStartsAt: true,
@@ -64,6 +65,7 @@ const PUBLIC_PRODUCT_SELECT = {
   basePrice: true,
   currency: true,
   stockType: true,
+  isSoldOut: true,
   inventoryQuantity: true,
   preorderSlotsRemaining: true,
   preorderStartsAt: true,
@@ -113,6 +115,7 @@ export interface CartItemStockCheck {
   product: {
     name: string;
     stockType: ProductStockType;
+    isSoldOut: boolean;
     inventoryQuantity: number | null;
     preorderSlotsRemaining: number | null;
     preorderStartsAt: Date | null;
@@ -191,6 +194,7 @@ export class CartRepository {
           select: {
             name: true,
             stockType: true,
+            isSoldOut: true,
             inventoryQuantity: true,
             preorderSlotsRemaining: true,
             preorderStartsAt: true,

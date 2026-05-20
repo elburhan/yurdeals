@@ -13,8 +13,12 @@ export interface AddressPayload {
   street: string;
   city: string;
   state: string;
+  lga: string;
+  area: string;
+  landmark: string;
   country?: string;
   postal_code?: string;
+  delivery_notes?: string;
   is_default?: boolean;
 }
 

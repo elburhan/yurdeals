@@ -39,7 +39,7 @@ const orderCreated = renderOrderCreatedEmail({
 });
 
 assert.match(orderCreated.subject, /YD-EMAIL-QA-001/);
-assert.match(orderCreated.html, /Your preorder has been received/);
+assert.match(orderCreated.html, /Your order has been received/);
 assert.match(orderCreated.html, /YD-EMAIL-QA-001/);
 assert.match(orderCreated.text, /Power Bank/);
 assert.doesNotMatch(orderCreated.html, /<script>/);

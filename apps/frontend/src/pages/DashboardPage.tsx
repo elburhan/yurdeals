@@ -134,7 +134,7 @@ export default function DashboardPage() {
             Authenticated
           </span>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-100 border border-surface-200 px-3 py-1 text-xs font-medium text-surface-600">
-            HttpOnly Cookie Session
+            Secured Session
           </span>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-100 border border-accent-200 px-3 py-1 text-xs font-medium text-accent-700">
             Role: {user.role}

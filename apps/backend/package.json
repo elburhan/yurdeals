@@ -12,6 +12,9 @@
     "db:generate": "prisma generate",
     "db:seed": "ts-node prisma/seed.ts",
     "email:templates:check": "ts-node scripts/verify-email-templates.ts",
+    "email:readiness:check": "ts-node scripts/check-email-readiness.ts",
+    "payments:reconcile": "ts-node scripts/reconcile-payments.ts",
+    "reservations:expire": "ts-node scripts/expire-reservations.ts",
     "products:publish": "ts-node scripts/bulk-publish-products.ts",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset"

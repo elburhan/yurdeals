@@ -1,10 +1,13 @@
 import { Link } from 'react-router-dom';
 import { formatPrice } from './ProductCard';
+import type { DeliveryStockType } from '../lib/deliveryEstimate';
+import { getDeliveryEstimate } from '../lib/deliveryEstimate';
 
 interface OrderSummaryProps {
   itemCount: number;
   subtotal: number;
   currency: string;
+  stockType: DeliveryStockType;
   ctaTo?: string;
   ctaLabel?: string;
   disabled?: boolean;
@@ -15,11 +18,14 @@ export function OrderSummary({
   itemCount,
   subtotal,
   currency,
+  stockType,
   ctaTo,
   ctaLabel = 'Proceed to Checkout',
   disabled = false,
   sticky = false,
 }: OrderSummaryProps): JSX.Element {
+  const deliveryEstimate = getDeliveryEstimate(stockType);
+
   return (
     <aside
       className={`h-fit rounded-2xl border border-surface-200 bg-white p-5 shadow-sm ${
@@ -58,9 +64,12 @@ export function OrderSummary({
         </Link>
       )}
 
-      <div className="mt-4 space-y-2 text-sm text-surface-500">
-        <p>Estimated delivery: 25-40 days after order confirmation.</p>
-        <p>We inspect your preorder in China before shipping.</p>
+      <div className={`mt-4 space-y-2 rounded-2xl p-4 text-sm ${deliveryEstimate.panelClassName}`}>
+        <p className={`inline-flex items-center gap-2 font-semibold ${deliveryEstimate.textClassName}`}>
+          <span aria-hidden="true">{deliveryEstimate.icon}</span>
+          <span>{deliveryEstimate.label}</span>
+        </p>
+        <p className={deliveryEstimate.textClassName}>{deliveryEstimate.note}</p>
       </div>
     </aside>
   );

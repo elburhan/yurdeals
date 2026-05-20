@@ -2,12 +2,16 @@
 
 YurDeals Phase 1 customer email notifications use Resend through a small backend HTTPS client. No Resend SDK is required.
 
-## Provider setup
+## Provider Setup
 
 1. Create or open a Resend account.
-2. Verify the sending domain you want to use, for example `yurdeals.com`.
-3. Create a server-side Resend API key.
-4. Configure backend environment variables:
+2. Add the production sending domain in Resend: `yurdeals.com`.
+3. Add every DNS record Resend provides at the DNS host.
+4. Wait for SPF and DKIM verification to pass in Resend.
+5. Confirm DMARC exists for `yurdeals.com`.
+6. Create a server-side Resend API key with send permission.
+7. Store the key in Render only as `RESEND_API_KEY`.
+8. Configure backend environment variables:
 
 ```env
 EMAIL_ENABLED=true
@@ -16,9 +20,9 @@ EMAIL_FROM="YurDeals <orders@yurdeals.com>"
 EMAIL_REPLY_TO="support@yurdeals.com"
 ```
 
-Use `onboarding@resend.dev` only for early Resend sandbox testing. Production should use a verified domain.
+Use `onboarding@resend.dev` only for early Resend sandbox testing. Production must use the verified `yurdeals.com` sender domain.
 
-## Implemented triggers
+## Implemented Triggers
 
 - OTP verification email for `EMAIL` channel signup/resend flows.
 - Order created / preorder received email after order creation.
@@ -26,7 +30,7 @@ Use `onboarding@resend.dev` only for early Resend sandbox testing. Production sh
 
 Order status and shipment emails are intentionally left for a later phase.
 
-## Development behavior
+## Development Behavior
 
 - The existing dev OTP helper remains available.
 - If email is disabled in development, OTP codes are still captured by the dev helper.
@@ -40,22 +44,36 @@ npm run email:templates:check -w apps/backend
 
 This renders the OTP, preorder received, and payment confirmed templates, checks required copy, and verifies dangerous input is HTML-escaped.
 
-## Production behavior
+Config QA should use the readiness script; it does not call Resend and does not send emails.
+
+```bash
+npm run email:readiness:check -w apps/backend
+```
+
+## Production Behavior
 
 - `EMAIL_ENABLED=true`, `RESEND_API_KEY`, and `EMAIL_FROM` are required for OTP email delivery.
 - If OTP email delivery is not configured or fails in production, the OTP request fails instead of pretending an email was sent.
 - Order-created and payment-confirmed email failures are logged safely and do not break checkout or payment confirmation.
 - Emails are not sent to internal placeholder addresses ending in `.local`.
+- Normal logs must never include raw OTP values, API keys, provider payloads, or full sensitive customer data.
 
-## Production checklist
+## Production Checklist
 
-- Resend domain is verified with SPF, DKIM, and MX records.
-- `EMAIL_FROM` uses the verified domain.
-- `EMAIL_REPLY_TO` routes to an inbox support can monitor.
-- `EMAIL_ENABLED=true` is set only after the Resend key and sender are confirmed.
-- Signup OTP email is tested with a real inbox.
-- Guest checkout with a real email receives the preorder received email.
-- A Paystack test payment receives one payment confirmed email.
+- Resend domain `yurdeals.com` is added in the Resend dashboard.
+- Resend DNS records are added at the DNS host.
+- SPF verification passes in Resend.
+- DKIM verification passes in Resend.
+- DMARC exists for `yurdeals.com`.
+- `EMAIL_ENABLED=true` is set in Render.
+- `RESEND_API_KEY` is set in Render only.
+- `EMAIL_FROM="YurDeals <orders@yurdeals.com>"` uses the verified domain.
+- `EMAIL_REPLY_TO="support@yurdeals.com"` routes to a monitored inbox.
+- `npm run email:templates:check -w apps/backend` passes.
+- `npm run email:readiness:check -w apps/backend` passes.
+- Signup OTP email is tested with a real team-controlled inbox.
+- Guest checkout with a real team-controlled email receives the preorder received email.
+- A controlled Paystack payment receives one payment confirmed email.
 - Backend logs show masked recipients only, never OTPs or provider secrets.
 
 ## Idempotency
@@ -78,9 +96,9 @@ To verify idempotency manually:
 4. Confirm only one `PAYMENT_SUCCESS` in-app notification exists for the order.
 5. Confirm only one payment confirmed email arrives for the same payment ID.
 
-## Manual delivery test procedure
+## Manual Delivery Test Procedure
 
-### 1. Enable email in development
+### 1. Enable Email In Development
 
 Use a Resend test key or sandbox sender. Do not use production customer addresses for QA.
 
@@ -93,7 +111,7 @@ EMAIL_REPLY_TO="support@example.com"
 
 Restart the backend after changing env values.
 
-### 2. Trigger OTP email
+### 2. Trigger OTP Email
 
 1. Open the frontend signup flow.
 2. Register with an email address you control.
@@ -101,11 +119,11 @@ Restart the backend after changing env values.
 4. Confirm the OTP email arrives and contains:
    - 6-digit code,
    - expiry notice,
-   - “If you did not request this...” security copy.
+   - "If you did not request this..." security copy.
 
 In development, the dev OTP helper still captures the code for manual QA. The raw OTP must not appear in normal logs.
 
-### 3. Trigger order-created email
+### 3. Trigger Order-Created Email
 
 1. Add a product to cart.
 2. Checkout as a guest with a real email address, or as an authenticated customer.
@@ -116,7 +134,7 @@ In development, the dev OTP helper still captures the code for manual QA. The ra
    - total,
    - preorder next-step expectations.
 
-### 4. Trigger payment-confirmed email
+### 4. Trigger Payment-Confirmed Email
 
 1. From the checkout payment panel, choose Pay online.
 2. Complete Paystack test payment.
@@ -126,12 +144,13 @@ In development, the dev OTP helper still captures the code for manual QA. The ra
    - amount paid,
    - next-step expectations.
 
-## Dry-run behavior
+## Dry-Run Behavior
 
 There is no separate `EMAIL_DRY_RUN` flag in Phase 1. The safe dry-run path is:
 
 - keep `EMAIL_ENABLED=false`,
 - run `npm run email:templates:check -w apps/backend`,
+- run `npm run email:readiness:check -w apps/backend`,
 - use the development OTP helper for OTP QA.
 
 This avoids a second mode that could accidentally be left enabled in production. Real delivery is controlled by `EMAIL_ENABLED=true`.
@@ -140,7 +159,7 @@ This avoids a second mode that could accidentally be left enabled in production.
 
 - If OTP email fails in production, confirm `EMAIL_ENABLED=true`.
 - Confirm `RESEND_API_KEY` starts with the expected Resend key prefix and has send permissions.
-- Confirm `EMAIL_FROM` uses a verified Resend sender domain.
+- Confirm `EMAIL_FROM` uses the verified Resend sender domain.
 - Confirm the backend was restarted after changing env values.
 - Confirm the recipient is not an internal placeholder address ending in `.local`.
 - For Resend sandbox testing, confirm the recipient is allowed by the Resend account/test mode.

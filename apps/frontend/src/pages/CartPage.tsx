@@ -8,6 +8,7 @@ import { TrustBanner } from '../components/TrustBanner';
 import { formatPrice } from '../components/ProductCard';
 import { useCart } from '../hooks/useCart';
 import { useToast } from '../context/ToastContext';
+import { getDeliveryEstimate, inferDeliveryStockType } from '../lib/deliveryEstimate';
 
 export default function CartPage() {
   return <CartContent />;
@@ -17,6 +18,9 @@ function CartContent() {
   const { cart, isLoading, error, updateItem, removeItem } = useCart();
   const { showToast } = useToast();
   const items = cart?.items ?? [];
+  const orderDeliveryEstimate = getDeliveryEstimate(
+    inferDeliveryStockType(items.map((item) => item.product.stockType)),
+  );
 
   async function handleUpdateItem(itemId: string, quantity: number) {
     try {
@@ -77,6 +81,7 @@ function CartContent() {
 
           <div className="space-y-4">
             {items.map((item) => (
+              // Delivery messaging stays tied to the item's stock type so local and preorder items feel distinct.
               <article
                 key={item.id}
                 className="grid gap-4 rounded-lg border border-surface-200 bg-white p-4 sm:grid-cols-[112px_1fr]"
@@ -115,8 +120,13 @@ function CartContent() {
                       <p className="mt-1 text-sm font-semibold text-surface-900">
                         Preorder Price: {formatPrice(item.priceSnapshot, item.currency)}
                       </p>
-                      <p className="mt-1 text-sm font-medium text-emerald-700">
-                        Estimated arrival: 25-40 days
+                      <p
+                        className={`mt-1 inline-flex items-center gap-2 text-sm font-semibold ${
+                          getDeliveryEstimate(item.product.stockType).textClassName
+                        }`}
+                      >
+                        <span aria-hidden="true">{getDeliveryEstimate(item.product.stockType).icon}</span>
+                        <span>{getDeliveryEstimate(item.product.stockType).label}</span>
                       </p>
                     </div>
                     <button
@@ -151,6 +161,7 @@ function CartContent() {
             itemCount={cart?.summary.itemCount ?? 0}
             subtotal={cart?.summary.subtotal ?? 0}
             currency={cart?.summary.currency ?? 'NGN'}
+            stockType={orderDeliveryEstimate.stockType}
             ctaTo="/checkout"
             disabled={items.length === 0}
             sticky

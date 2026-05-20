@@ -39,9 +39,16 @@ export function AddressCard({
             {address.firstName} {address.lastName} · {address.phone}
           </p>
           <p className="mt-2 text-sm leading-6 text-surface-600">
-            {address.street}, {address.city}, {address.state}, {address.country}
+            {[address.street, address.area, address.city, address.lga, address.state, address.country]
+              .filter(Boolean)
+              .join(', ')}
             {address.postalCode ? ` ${address.postalCode}` : ''}
           </p>
+          {address.landmark ? (
+            <p className="mt-1 text-sm font-medium text-surface-700">
+              Landmark: {address.landmark}
+            </p>
+          ) : null}
         </div>
         {onSelect && (
           <button

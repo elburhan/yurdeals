@@ -7,6 +7,7 @@ import { markGuestWhatsappCheckout, markWhatsappCheckout } from '../lib/orderApi
 import { buildWhatsappCheckoutUrl } from '../lib/whatsappCheckout';
 import { useToast } from '../context/ToastContext';
 import { saveGuestPaymentSession } from '../lib/guestPaymentSession';
+import { inferDeliveryStockType } from '../lib/deliveryEstimate';
 
 interface PaymentPanelProps {
   order: OrderSummary;
@@ -40,6 +41,9 @@ export function PaymentPanel({ order, guestAccessToken, isGuestCheckout = false 
           orderId: order.id,
           paymentId: response.data.payment.id,
           guestAccessToken,
+          deliveryStockType: inferDeliveryStockType(
+            order.items.map((item) => item.stockTypeSnapshot),
+          ),
         });
       } else {
         response = await initiatePayment(order.id);

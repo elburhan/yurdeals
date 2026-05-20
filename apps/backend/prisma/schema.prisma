@@ -35,6 +35,7 @@ model User {
   cart             Cart?
   authoredPosts    BlogPost[]     @relation("BlogPostAuthor")
   approvedProducts Product[]      @relation("ApprovedProducts")
+  riskReviewedOrders Order[]      @relation("RiskReviewedOrders")
   otpCodes         OtpCode[]
 
   @@map("users")
@@ -84,8 +85,12 @@ model Address {
   street     String
   city       String
   state      String
+  lga        String?
+  area       String?
+  landmark   String?
   country    String   @default("Nigeria")
   postalCode String?  @map("postal_code")
+  deliveryNotes String? @map("delivery_notes")
   isDefault  Boolean  @default(false) @map("is_default")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
@@ -119,53 +124,63 @@ model Category {
 }
 
 model Product {
-  id                     String                @id @default(cuid())
+  id                     String                 @id @default(cuid())
   name                   String
-  slug                   String                @unique
+  slug                   String                 @unique
   description            String
-  shortDesc              String?               @map("short_desc")
-  categoryId             String                @map("category_id")
-  basePrice              Decimal               @map("base_price") @db.Decimal(12, 2)
-  currency               String                @default("NGN")
-  sourceCountry          String                @default("China") @map("source_country")
-  stockType              ProductStockType      @default(IN_STOCK) @map("stock_type")
-  approvalStatus         ProductApprovalStatus @default(PENDING_REVIEW) @map("approval_status")
-  isPublished            Boolean               @default(false) @map("is_published")
-  sku                    String?               @unique
-  weight                 Decimal?              @db.Decimal(8, 2)
-  isFeatured             Boolean               @default(false) @map("is_featured")
-  isActive               Boolean               @default(true) @map("is_active")
-  adminApprovedAt        DateTime?             @map("admin_approved_at")
-  approvedByUserId       String?               @map("approved_by_user_id")
-  inventoryQuantity      Int?                  @map("inventory_quantity")
-  preorderSlotsTotal     Int?                  @map("preorder_slots_total")
-  preorderSlotsRemaining Int?                  @map("preorder_slots_remaining")
-  preorderStartsAt       DateTime?             @map("preorder_starts_at")
-  preorderEndsAt         DateTime?             @map("preorder_ends_at")
-  estimatedArrivalAt     DateTime?             @map("estimated_arrival_at")
-  trendingScore          Decimal               @default(0) @map("trending_score") @db.Decimal(10, 4)
-  salesVelocity7d        Int                   @default(0) @map("sales_velocity_7d")
-  salesVelocity30d       Int                   @default(0) @map("sales_velocity_30d")
-  unitsSoldTotal         Int                   @default(0) @map("units_sold_total")
-  metaTitle              String?               @map("meta_title")
-  metaDescription        String?               @map("meta_description")
-  tags                   String[]              @default([])
-  createdAt              DateTime              @default(now()) @map("created_at")
-  updatedAt              DateTime              @updatedAt @map("updated_at")
+  shortDesc              String?                @map("short_desc")
+  categoryId             String                 @map("category_id")
+  basePrice              Decimal                @map("base_price") @db.Decimal(12, 2)
+  currency               String                 @default("NGN")
+  sourceCountry          String                 @default("China") @map("source_country")
+  stockType              ProductStockType       @default(IN_STOCK) @map("stock_type")
+  approvalStatus         ProductApprovalStatus  @default(PENDING_REVIEW) @map("approval_status")
+  isPublished            Boolean                @default(false) @map("is_published")
+  sku                    String?                @unique
+  weight                 Decimal?               @db.Decimal(8, 2)
+  isFeatured             Boolean                @default(false) @map("is_featured")
+  isActive               Boolean                @default(true) @map("is_active")
+  isSoldOut              Boolean                @default(false) @map("is_sold_out")
+  marketingBadge         ProductMarketingBadge? @map("marketing_badge")
+  adminApprovedAt        DateTime?              @map("admin_approved_at")
+  approvedByUserId       String?                @map("approved_by_user_id")
+  inventoryQuantity      Int?                   @map("inventory_quantity")
+  preorderSlotsTotal     Int?                   @map("preorder_slots_total")
+  preorderSlotsRemaining Int?                   @map("preorder_slots_remaining")
+  preorderStartsAt       DateTime?              @map("preorder_starts_at")
+  preorderEndsAt         DateTime?              @map("preorder_ends_at")
+  estimatedArrivalAt     DateTime?              @map("estimated_arrival_at")
+  fxAdjustmentPercent    Decimal?               @map("fx_adjustment_percent") @db.Decimal(7, 2)
+  shippingBufferPercent  Decimal?               @map("shipping_buffer_percent") @db.Decimal(7, 2)
+  preorderMarginPercent  Decimal?               @map("preorder_margin_percent") @db.Decimal(7, 2)
+  fxRateSnapshot         Decimal?               @map("fx_rate_snapshot") @db.Decimal(14, 4)
+  supplierCostSnapshot   Decimal?               @map("supplier_cost_snapshot") @db.Decimal(12, 2)
+  shippingCostSnapshot   Decimal?               @map("shipping_cost_snapshot") @db.Decimal(12, 2)
+  pricingBatchLabel      String?                @map("pricing_batch_label")
+  trendingScore          Decimal                @default(0) @map("trending_score") @db.Decimal(10, 4)
+  salesVelocity7d        Int                    @default(0) @map("sales_velocity_7d")
+  salesVelocity30d       Int                    @default(0) @map("sales_velocity_30d")
+  unitsSoldTotal         Int                    @default(0) @map("units_sold_total")
+  metaTitle              String?                @map("meta_title")
+  metaDescription        String?                @map("meta_description")
+  tags                   String[]               @default([])
+  createdAt              DateTime               @default(now()) @map("created_at")
+  updatedAt              DateTime               @updatedAt @map("updated_at")
 
-  category          Category           @relation(fields: [categoryId], references: [id])
-  approvedBy        User?              @relation("ApprovedProducts", fields: [approvedByUserId], references: [id])
-  variants          ProductVariant[]
-  images            ProductImage[]
-  orderItems        OrderItem[]
-  cartItems         CartItem[]
+  category              Category               @relation(fields: [categoryId], references: [id])
+  approvedBy            User?                  @relation("ApprovedProducts", fields: [approvedByUserId], references: [id])
+  variants              ProductVariant[]
+  images                ProductImage[]
+  orderItems            OrderItem[]
+  cartItems             CartItem[]
   inventoryReservations InventoryReservation[]
-  reviews           Review[]
-  wishlistItems     WishlistItem[]
-  preorderCampaigns PreorderCampaign[]
+  reviews               Review[]
+  wishlistItems         WishlistItem[]
+  preorderCampaigns     PreorderCampaign[]
 
   @@index([categoryId])
   @@index([stockType, approvalStatus, isActive, isPublished])
+  @@index([isSoldOut, isActive, isPublished])
   @@index([isFeatured, isActive, isPublished])
   @@index([trendingScore, salesVelocity7d, isActive, isPublished])
   @@index([preorderEndsAt])
@@ -185,6 +200,11 @@ enum ProductApprovalStatus {
   ARCHIVED
 }
 
+enum ProductMarketingBadge {
+  SELLING_FAST
+  TRENDING
+}
+
 model ProductVariant {
   id         String   @id @default(cuid())
   productId  String   @map("product_id")
@@ -197,9 +217,9 @@ model ProductVariant {
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
-  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
-  orderItems OrderItem[]
-  cartItems  CartItem[]
+  product               Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItems            OrderItem[]
+  cartItems             CartItem[]
   inventoryReservations InventoryReservation[]
 
   @@index([productId, isActive])
@@ -280,17 +300,24 @@ model Order {
   paidAt                    DateTime?         @map("paid_at")
   guestAccessTokenHash      String?           @map("guest_access_token_hash")
   guestAccessTokenExpiresAt DateTime?         @map("guest_access_token_expires_at")
+  riskLevel                 FraudRiskLevel    @default(LOW) @map("risk_level")
+  riskFlags                 String[]          @default([]) @map("risk_flags")
+  riskReviewedAt            DateTime?         @map("risk_reviewed_at")
+  riskReviewedBy            String?           @map("risk_reviewed_by")
+  holdForManualReview       Boolean           @default(false) @map("hold_for_manual_review")
+  fraudNotes                String?           @map("fraud_notes")
   notes                     String?
   cancelReason              String?           @map("cancel_reason")
   createdAt                 DateTime          @default(now()) @map("created_at")
   updatedAt                 DateTime          @updatedAt @map("updated_at")
 
-  user            User        @relation(fields: [userId], references: [id])
-  shippingAddress Address?    @relation("ShippingAddress", fields: [shippingAddressId], references: [id])
-  billingAddress  Address?    @relation("BillingAddress", fields: [billingAddressId], references: [id])
-  items           OrderItem[]
-  payments        Payment[]
-  shipments       Shipment[]
+  user                  User                   @relation(fields: [userId], references: [id])
+  riskReviewer          User?                  @relation("RiskReviewedOrders", fields: [riskReviewedBy], references: [id])
+  shippingAddress       Address?               @relation("ShippingAddress", fields: [shippingAddressId], references: [id])
+  billingAddress        Address?               @relation("BillingAddress", fields: [billingAddressId], references: [id])
+  items                 OrderItem[]
+  payments              Payment[]
+  shipments             Shipment[]
   inventoryReservations InventoryReservation[]
 
   @@index([userId, status, createdAt])
@@ -299,7 +326,15 @@ model Order {
   @@index([inspectionStatus])
   @@index([guestAccessTokenHash])
   @@index([guestAccessTokenExpiresAt])
+  @@index([holdForManualReview, riskLevel, createdAt])
+  @@index([riskReviewedBy])
   @@map("orders")
+}
+
+enum FraudRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
 }
 
 enum OrderStatus {
@@ -334,9 +369,9 @@ model OrderItem {
   stockTypeSnapshot  ProductStockType @map("stock_type_snapshot")
   inspectionRequired Boolean          @default(false) @map("inspection_required")
 
-  order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product Product         @relation(fields: [productId], references: [id])
-  variant ProductVariant? @relation(fields: [variantId], references: [id])
+  order                Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product              Product               @relation(fields: [productId], references: [id])
+  variant              ProductVariant?       @relation(fields: [variantId], references: [id])
   inventoryReservation InventoryReservation?
 
   @@index([orderId])

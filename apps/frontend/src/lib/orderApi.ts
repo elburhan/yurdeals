@@ -14,11 +14,15 @@ export interface CreateGuestOrderPayload {
   guest: {
     full_name: string;
     phone: string;
-    email?: string;
+    email: string;
     state: string;
+    lga: string;
     city: string;
     area: string;
+    street: string;
+    landmark: string;
     address_line?: string;
+    delivery_notes?: string;
     preferred_contact_method: 'WHATSAPP' | 'SMS' | 'CALL';
   };
   items: Array<{

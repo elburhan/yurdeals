@@ -1,0 +1,54 @@
+# YurDeals Backend Production Environment
+# Placeholder-only template. Do not paste real secrets into this file.
+
+# Prefer a pooled production URL on Render/Vercel-style infrastructure.
+# Example:
+DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public&connection_limit=5&sslmode=require"
+NODE_ENV="production"
+PORT="4000"
+API_VERSION="v1"
+
+FRONTEND_URL="https://www.yourdomain.com"
+CORS_ORIGIN="https://www.yourdomain.com,https://yourdomain.com"
+
+JWT_SECRET="REPLACE_WITH_64_PLUS_CHAR_RANDOM_SECRET"
+JWT_ACCESS_EXPIRES_IN_SECONDS="900"
+JWT_REFRESH_EXPIRES_IN_SECONDS="604800"
+COOKIE_SECRET="REPLACE_WITH_DIFFERENT_64_PLUS_CHAR_RANDOM_SECRET"
+COOKIE_SAME_SITE="none"
+
+RATE_LIMIT_WINDOW_MS="60000"
+RATE_LIMIT_MAX_REQUESTS="300"
+AUTH_RATE_LIMIT_WINDOW_MS="60000"
+AUTH_RATE_LIMIT_MAX_REQUESTS="100"
+ORDER_RATE_LIMIT_WINDOW_MS="60000"
+ORDER_RATE_LIMIT_MAX_REQUESTS="60"
+PAYMENT_RATE_LIMIT_WINDOW_MS="60000"
+PAYMENT_RATE_LIMIT_MAX_REQUESTS="60"
+ADMIN_RATE_LIMIT_WINDOW_MS="60000"
+ADMIN_RATE_LIMIT_MAX_REQUESTS="600"
+WEBHOOK_RATE_LIMIT_WINDOW_MS="60000"
+WEBHOOK_RATE_LIMIT_MAX_REQUESTS="600"
+
+PAYSTACK_SECRET_KEY="sk_live_REPLACE_WITH_PAYSTACK_LIVE_SECRET"
+PAYSTACK_PUBLIC_KEY="pk_live_REPLACE_WITH_PAYSTACK_LIVE_PUBLIC"
+PAYSTACK_CALLBACK_URL="https://api.yourdomain.com/payment-return"
+
+# Optional. Leave all Flutterwave vars empty when Paystack is the only enabled provider.
+# If any Flutterwave value is set, all four must be set.
+FLUTTERWAVE_SECRET_KEY=""
+FLUTTERWAVE_PUBLIC_KEY=""
+FLUTTERWAVE_WEBHOOK_SECRET_HASH=""
+FLUTTERWAVE_CALLBACK_URL=""
+
+CLOUDINARY_CLOUD_NAME="your_cloud_name"
+CLOUDINARY_API_KEY="your_cloudinary_api_key"
+CLOUDINARY_API_SECRET="your_cloudinary_api_secret"
+
+EMAIL_ENABLED="true"
+RESEND_API_KEY="re_REPLACE_WITH_RESEND_API_KEY"
+EMAIL_FROM="YurDeals <orders@yourdomain.com>"
+EMAIL_REPLY_TO="support@yourdomain.com"
+
+SEED_ADMIN_EMAIL="admin@yourdomain.com"
+SEED_ADMIN_PASSWORD="REPLACE_WITH_ONE_TIME_STRONG_PASSWORD"

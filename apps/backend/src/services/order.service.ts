@@ -7,6 +7,7 @@ import { orderRepository } from '../repositories/order.repository';
 import { CreateGuestOrderInput, CreateOrderInput, OrderQueryInput } from '../schemas/order.schema';
 import { AppError } from '../middleware/errorHandler';
 import { AuditContext, writeAuditLog } from './audit.service';
+import { evaluateAndPersistOrderRisk } from './fraudRisk.service';
 import { notifyOrderCreated, notifyOrderStatusChanged } from './notification.service';
 import { verifyGuestOrderAccess } from './guestOrderAccess.service';
 
@@ -116,6 +117,11 @@ export async function createOrderFromCart(
       itemCount: data.order.itemCount,
     },
   });
+  await evaluateAndPersistOrderRisk({
+    orderId: data.order.id,
+    ipAddress: auditContext?.ipAddress ?? undefined,
+    stage: 'ORDER_CREATED',
+  });
   return data;
 }
 
@@ -143,6 +149,11 @@ export async function createGuestOrderFromCart(
       itemCount: data.order.itemCount,
       customerType: 'GUEST',
     },
+  });
+  await evaluateAndPersistOrderRisk({
+    orderId: data.order.id,
+    ipAddress: auditContext?.ipAddress ?? undefined,
+    stage: 'ORDER_CREATED',
   });
   return data;
 }

@@ -11,8 +11,8 @@ const trustItems = [
   },
   {
     icon: '25',
-    label: '25-40 day delivery',
-    detail: 'China to Nigeria',
+    label: 'Tracked delivery updates',
+    detail: 'local and preorder orders',
   },
   {
     icon: 'NG',

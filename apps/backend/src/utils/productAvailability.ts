@@ -8,6 +8,7 @@ import { AppError } from '../middleware/errorHandler';
 export interface ProductAvailabilityInput {
   name: string;
   stockType: ProductStockType;
+  isSoldOut?: boolean;
   inventoryQuantity?: number | null;
   preorderSlotsRemaining?: number | null;
   preorderStartsAt?: Date | null;
@@ -32,6 +33,14 @@ export function assertProductAvailabilityForQuantity(input: {
   now?: Date;
 }): void {
   const now = input.now ?? new Date();
+
+  if (input.product.isSoldOut) {
+    throw new AppError(
+      `"${input.product.name}" is currently sold out`,
+      409,
+      'PRODUCT_SOLD_OUT',
+    );
+  }
 
   if (input.product.stockType === ProductStockType.PREORDER) {
     assertPreorderAvailability(input.product, input.quantity, now);

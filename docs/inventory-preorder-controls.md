@@ -81,6 +81,8 @@ If stock or preorder slots are insufficient while creating/reactivating a reserv
 - `Preorder starts`: optional opening time for preorder.
 - `Preorder ends`: optional closing time for preorder.
 - `Estimated arrival`: optional customer-facing ETA.
+- `Pricing batch label`: optional customer-safe batch name for storefront preorder messaging.
+- `FX adjustment percent`, `Shipping buffer percent`, `Preorder margin percent`, `FX rate snapshot`, `Supplier cost snapshot`, and `Shipping cost snapshot`: optional admin-only pricing protection metadata for the current preorder batch.
 
 ## PaymentEvent Audit Entries
 
@@ -96,14 +98,25 @@ Reservation lifecycle events use safe `PaymentEvent` rows:
 
 ## Current Limitations
 
-- No scheduled background expiry job yet.
+- Reservation expiry is available through the operational script below, but production still needs a cron or worker schedule wired.
 - `PreorderCampaign` and `PreorderSlot` remain dormant in Phase 1.
 - There is no inventory audit ledger yet.
 - Admin variant stock management remains a future improvement.
 
+## Scheduled Reservation Expiry
+
+Run from a cron job or scheduled worker every `5-10` minutes:
+
+```bash
+npm run reservations:expire -w apps/backend
+```
+
+The script marks overdue active reservations as `EXPIRED` and restores availability without changing
+checkout or provider verification logic.
+
 ## Phase 2 TODOs
 
-- Add scheduled reservation expiry.
+- Add a first-class scheduler/worker deployment for reservation expiry if the platform does not provide cron.
 - Activate preorder campaigns and per-user slots if needed.
 - Add inventory adjustment history and admin stock operations.
 - Add manual payment/inventory reconciliation tools.

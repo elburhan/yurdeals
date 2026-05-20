@@ -52,7 +52,7 @@ export function renderOtpEmail(input: OtpEmailInput): RenderedEmail {
 }
 
 export function renderOrderCreatedEmail(input: OrderCreatedEmailInput): RenderedEmail {
-  const subject = `Preorder received: ${input.orderNumber}`;
+  const subject = `Order received: ${input.orderNumber}`;
   const itemRows = input.items
     .map(
       (item) => `
@@ -68,7 +68,7 @@ export function renderOrderCreatedEmail(input: OrderCreatedEmailInput): Rendered
     subject,
     html: renderLayout({
       preview: `We received your YurDeals preorder ${input.orderNumber}`,
-      title: 'Your preorder has been received',
+      title: 'Your order has been received',
       body: `
         <p>Hi ${escapeHtml(input.customerName)},</p>
         <p>We received your preorder <strong>${escapeHtml(input.orderNumber)}</strong>. You can now complete payment online or continue through WhatsApp support.</p>
@@ -107,7 +107,8 @@ export function renderPaymentConfirmedEmail(input: PaymentConfirmedEmailInput): 
           <span>Amount paid</span>
           <strong>${escapeHtml(formatMoney(input.amount, input.currency))}</strong>
         </div>
-        <p>We will begin the next step for your preorder. For China orders, this includes supplier confirmation, quality inspection, and shipping updates.</p>
+        <p>We're preparing your order now. For China orders, this includes supplier confirmation, quality inspection, and shipping updates.</p>
+        <p class="muted">We may contact you if we need any additional confirmation before dispatch.</p>
         <p class="muted">Need help? Reply to this email and YurDeals support will assist.</p>
       `,
     }),
@@ -115,7 +116,8 @@ export function renderPaymentConfirmedEmail(input: PaymentConfirmedEmailInput): 
       `Hi ${input.customerName},`,
       `Your payment for order ${input.orderNumber} has been confirmed.`,
       `Amount paid: ${formatMoney(input.amount, input.currency)}`,
-      'We will begin supplier confirmation, quality inspection, and shipping updates for your preorder.',
+      "We're preparing your order now. This includes supplier confirmation, quality inspection, and shipping updates for your preorder.",
+      'We may contact you if we need any additional confirmation before dispatch.',
       'Need help? Reply to this email and YurDeals support will assist.',
     ].join('\n\n'),
   };

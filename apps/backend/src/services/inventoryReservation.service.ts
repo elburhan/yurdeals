@@ -27,6 +27,7 @@ interface OrderItemForReservation {
   stockTypeSnapshot: ProductStockType;
   product: {
     stockType: ProductStockType;
+    isSoldOut: boolean;
     inventoryQuantity: number | null;
     preorderSlotsRemaining: number | null;
   };
@@ -48,6 +49,7 @@ const ORDER_ITEMS_FOR_RESERVATION_SELECT = {
   product: {
     select: {
       stockType: true,
+      isSoldOut: true,
       inventoryQuantity: true,
       preorderSlotsRemaining: true,
     },
@@ -317,6 +319,7 @@ async function releaseReservationsByStatus(
       stockTypeSnapshot: reservation.stockType,
       product: {
         stockType: reservation.stockType,
+        isSoldOut: false,
         inventoryQuantity: reservation.orderItem.product.inventoryQuantity,
         preorderSlotsRemaining: reservation.orderItem.product.preorderSlotsRemaining,
       },
@@ -373,6 +376,10 @@ async function decrementAvailabilityForReservation(
   item: OrderItemForReservation,
 ): Promise<void> {
   const stockType = item.stockTypeSnapshot ?? item.product.stockType;
+
+  if (item.product.isSoldOut) {
+    throwReservationUnavailable(item, 'PRODUCT_SOLD_OUT');
+  }
 
   if (stockType === ProductStockType.IN_STOCK) {
     if (item.variantId) {

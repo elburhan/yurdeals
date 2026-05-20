@@ -3,25 +3,32 @@ import { useState } from 'react';
 import type { ProductListItem } from '@yurdeals/shared';
 import { useCart } from '../hooks/useCart';
 import { useToast } from '../context/ToastContext';
+import { getDeliveryEstimate } from '../lib/deliveryEstimate';
 
 interface ProductCardProps {
   product: ProductListItem;
   badgeLabel?: string;
 }
 
-export function ProductCard({ product, badgeLabel }: ProductCardProps) {
+export function ProductCard({ product }: ProductCardProps) {
   const { addItem } = useCart();
   const { showToast } = useToast();
   const [isAdding, setIsAdding] = useState(false);
   const [hasImageError, setHasImageError] = useState(false);
   const primaryImage = product.primaryImage;
   const isPreorder = product.stockType === 'PREORDER';
-  const deliveryLabel = formatArrivalLabel(product.estimatedArrivalAt);
+  const isSoldOut = product.isSoldOut;
+  const deliveryEstimate = getDeliveryEstimate(product.stockType);
   const availabilityLabel = getAvailabilityLabel(product);
-  const conversionBadge =
-    badgeLabel ?? (product.isFeatured ? 'Selling Fast' : isPreorder ? 'Limited Preorder' : undefined);
+  const preorderBatchMessage = getPreorderBatchMessage(product);
+  const marketingBadge = isSoldOut ? null : getMarketingBadgeLabel(product.marketingBadge);
 
   async function handleAddToCart() {
+    if (isSoldOut) {
+      showToast('This item is currently sold out.', 'error');
+      return;
+    }
+
     setIsAdding(true);
     try {
       await addItem({
@@ -43,9 +50,14 @@ export function ProductCard({ product, badgeLabel }: ProductCardProps) {
           <span className="absolute left-2 top-2 z-10 rounded-full bg-primary-600 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
             {isPreorder ? 'Preorder' : 'Local'}
           </span>
-          {conversionBadge && (
+          {marketingBadge && (
             <span className="absolute right-2 top-2 z-10 rounded-full bg-amber-400 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-surface-950 shadow-sm">
-              {conversionBadge}
+              {marketingBadge}
+            </span>
+          )}
+          {isSoldOut && (
+            <span className="absolute inset-x-3 bottom-3 z-10 rounded-xl bg-surface-950/85 px-3 py-2 text-center text-xs font-black uppercase tracking-wide text-white shadow-sm">
+              Sold Out
             </span>
           )}
           {primaryImage && !hasImageError ? (
@@ -79,46 +91,64 @@ export function ProductCard({ product, badgeLabel }: ProductCardProps) {
             <span className="block text-xs font-semibold text-surface-500">Preorder Price</span>
             {formatPrice(product.basePrice, product.currency)}
           </p>
-          <p className="text-xs font-medium text-emerald-700">{deliveryLabel}</p>
+          <p
+            className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${deliveryEstimate.badgeClassName}`}
+          >
+            <span aria-hidden="true">{deliveryEstimate.icon}</span>
+            <span>{deliveryEstimate.label}</span>
+          </p>
           {availabilityLabel && (
-            <p className="text-xs font-semibold text-amber-700">{availabilityLabel}</p>
+            <p className={`text-xs font-semibold ${isSoldOut ? 'text-red-700' : 'text-amber-700'}`}>
+              {availabilityLabel}
+            </p>
+          )}
+          {preorderBatchMessage && (
+            <p className="text-xs leading-5 text-surface-600">{preorderBatchMessage}</p>
           )}
         </div>
       </Link>
       <div className="space-y-2 border-t border-surface-200 px-3 py-3 sm:px-4">
         <Link
           to={`/products/${product.id}`}
-          className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary-500 px-3 py-3 text-center text-sm font-semibold text-white shadow-sm transition hover:bg-primary-600 active:scale-[0.98] active:bg-primary-700 sm:text-base"
+          className={`flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-3 py-3 text-center text-sm font-semibold shadow-sm transition active:scale-[0.98] sm:text-base ${
+            isSoldOut
+              ? 'bg-surface-800 text-white hover:bg-surface-900'
+              : 'bg-primary-500 text-white hover:bg-primary-600 active:bg-primary-700'
+          }`}
         >
-          <span>Preorder Now</span>
+          <span>{isSoldOut ? 'View details' : 'Preorder Now'}</span>
           <span aria-hidden="true">-&gt;</span>
         </Link>
         <button
           onClick={handleAddToCart}
-          disabled={isAdding}
+          disabled={isAdding || isSoldOut}
           className="min-h-11 w-full rounded-xl border border-primary-500 px-3 py-2 text-sm font-semibold text-primary-700 transition hover:bg-primary-50 active:scale-[0.98] disabled:opacity-50"
           aria-label={`Add ${product.name} to cart`}
         >
-          {isAdding ? 'Adding...' : 'Add to cart'}
+          {isSoldOut ? 'Sold out' : isAdding ? 'Adding...' : 'Add to cart'}
         </button>
       </div>
     </article>
   );
 }
 
-function formatArrivalLabel(estimatedArrivalAt: string | null): string {
-  if (!estimatedArrivalAt) {
-    return 'Arrives in 25-40 days';
+function getMarketingBadgeLabel(badge: ProductListItem['marketingBadge']): string | null {
+  if (badge === 'SELLING_FAST') {
+    return 'Selling Fast';
   }
 
-  return `Estimated arrival: ${new Intl.DateTimeFormat('en-NG', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }).format(new Date(estimatedArrivalAt))}`;
+  if (badge === 'TRENDING') {
+    return 'Trending Item';
+  }
+
+  return null;
 }
 
 function getAvailabilityLabel(product: ProductListItem): string | null {
+  if (product.isSoldOut) {
+    return 'Sold out - check back later or contact support';
+  }
+
   if (product.stockType === 'PREORDER' && product.preorderSlotsRemaining !== null) {
     return `${product.preorderSlotsRemaining} preorder slot(s) left`;
   }
@@ -128,6 +158,36 @@ function getAvailabilityLabel(product: ProductListItem): string | null {
   }
 
   return null;
+}
+
+function getPreorderBatchMessage(product: ProductListItem): string | null {
+  if (product.stockType !== 'PREORDER' || product.isSoldOut) {
+    return null;
+  }
+
+  if (isClosingSoon(product.preorderEndsAt)) {
+    return 'Current preorder batch closes soon. Prices may update in future preorder batches.';
+  }
+
+  if (product.pricingBatchLabel) {
+    return `${product.pricingBatchLabel}. Prices may update in future preorder batches.`;
+  }
+
+  return 'Preorder pricing is set per batch and may update in future preorder batches.';
+}
+
+function isClosingSoon(preorderEndsAt: string | null): boolean {
+  if (!preorderEndsAt) {
+    return false;
+  }
+
+  const closingTime = new Date(preorderEndsAt).getTime();
+  if (Number.isNaN(closingTime)) {
+    return false;
+  }
+
+  const hoursUntilClose = (closingTime - Date.now()) / (1000 * 60 * 60);
+  return hoursUntilClose > 0 && hoursUntilClose <= 72;
 }
 
 function ProductCardImagePlaceholder({ productName }: { productName: string }): JSX.Element {

@@ -38,7 +38,7 @@ const whyChooseItems = [
   },
   {
     icon: 'support',
-    title: 'Built for Nigerians',
+    title: 'Built for your Business',
     description: 'Local payments, reliable shipping, and real support that understands our market.',
   },
 ] as const;
@@ -171,7 +171,7 @@ export default function HomePage() {
               ))}
             </div>
             <p className="inline-flex max-w-[23rem] rounded-full border border-primary-300/40 bg-primary-500/15 px-3 py-1 text-[11px] font-bold leading-4.5 text-primary-100 sm:max-w-none sm:px-4 sm:py-2 sm:text-sm sm:leading-6">
-              Limited preorder slots at factory prices - prices may rise after arrival in Nigeria.
+              Limited preorder slots at factory prices - unbeatable prices, best quality .
             </p>
             <div className="grid gap-2 sm:flex sm:flex-wrap sm:gap-3">
               <Link
@@ -191,7 +191,7 @@ export default function HomePage() {
               <span className="rounded-full bg-white px-3 py-1 font-bold text-primary-700">
                 Secure payment
               </span>
-              <span>Secure online payment. Over 100 happy customers.</span>
+              <span>Secure online payment. Over 100+ happy customers.</span>
             </div>
           </div>
         </div>
@@ -310,7 +310,7 @@ export default function HomePage() {
                 href="tel:+23470609716345"
                 className="min-h-12 rounded-full bg-primary-500 px-5 py-3 text-center text-sm font-semibold text-white shadow-sm hover:bg-primary-600 active:bg-primary-700"
               >
-                Call +234 706 097 1634
+                Call +234 706 97 1634
               </a>
               <a
                 href="https://wa.me/23470609716345"

@@ -24,12 +24,24 @@ import {
   AdminProductQueryInput,
   adminShipmentQuerySchema,
   AdminShipmentQueryInput,
+  adminUpdateOrderRiskReviewSchema,
+  AdminUpdateOrderRiskReviewInput,
   adminUpdateOrderStatusSchema,
   AdminUpdateOrderStatusInput,
   adminUpdateProductSchema,
   AdminCreateProductInput,
   AdminUpdateProductInput,
 } from '../schemas/admin.schema';
+import {
+  adminBlogPostParamsSchema,
+  AdminBlogPostParamsInput,
+  adminBlogPostQuerySchema,
+  AdminBlogPostQueryInput,
+  adminCreateBlogPostSchema,
+  AdminCreateBlogPostInput,
+  adminUpdateBlogPostSchema,
+  AdminUpdateBlogPostInput,
+} from '../schemas/blog.schema';
 import {
   createAdminProduct,
   deleteAdminProduct,
@@ -38,9 +50,18 @@ import {
   listAdminOrders,
   listAdminProducts,
   listAdminShipments,
+  updateAdminOrderRiskReview,
   updateAdminOrderStatus,
   updateAdminProduct,
 } from '../services/admin.service';
+import { reconcilePendingPaystackPayments } from '../services/paymentReconciliation.service';
+import {
+  archiveAdminBlogPost,
+  createAdminBlogPost,
+  getAdminBlogPost,
+  listAdminBlogPosts,
+  updateAdminBlogPost,
+} from '../services/blog.service';
 import { getPaginationMeta, sendSuccess } from '../utils';
 import { uploadProductImage } from '../lib/cloudinary';
 import { AppError } from '../middleware/errorHandler';
@@ -88,6 +109,116 @@ router.get('/overview', async (_req: Request, res: Response, next: NextFunction)
     next(error);
   }
 });
+
+router.post('/payments/reconcile', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = await reconcilePendingPaystackPayments();
+    sendSuccess(res, 200, data, 'Payment reconciliation completed');
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get(
+  '/blog-posts',
+  validateQuery(adminBlogPostQuerySchema),
+  async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const query = res.locals.validatedQuery as AdminBlogPostQueryInput;
+      const data = await listAdminBlogPosts(query);
+      sendSuccess(res, 200, data, 'Admin blog posts retrieved');
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  '/blog-posts',
+  validateBody(adminCreateBlogPostSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await createAdminBlogPost(req.body as AdminCreateBlogPostInput, {
+        userId: req.user?.id,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      sendSuccess(res, 201, data, 'Blog post created');
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.get(
+  '/blog-posts/:postId',
+  validateParams(adminBlogPostParamsSchema),
+  async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const params = res.locals.validatedParams as AdminBlogPostParamsInput;
+      const data = await getAdminBlogPost(params.postId);
+      sendSuccess(res, 200, data, 'Admin blog post retrieved');
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.put(
+  '/blog-posts/:postId',
+  validateParams(adminBlogPostParamsSchema),
+  validateBody(adminUpdateBlogPostSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const params = res.locals.validatedParams as AdminBlogPostParamsInput;
+      const data = await updateAdminBlogPost(params.postId, req.body as AdminUpdateBlogPostInput, {
+        userId: req.user?.id,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      sendSuccess(res, 200, data, 'Blog post updated');
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.patch(
+  '/blog-posts/:postId',
+  validateParams(adminBlogPostParamsSchema),
+  validateBody(adminUpdateBlogPostSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const params = res.locals.validatedParams as AdminBlogPostParamsInput;
+      const data = await updateAdminBlogPost(params.postId, req.body as AdminUpdateBlogPostInput, {
+        userId: req.user?.id,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      sendSuccess(res, 200, data, 'Blog post updated');
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.delete(
+  '/blog-posts/:postId',
+  validateParams(adminBlogPostParamsSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const params = res.locals.validatedParams as AdminBlogPostParamsInput;
+      const data = await archiveAdminBlogPost(params.postId, {
+        userId: req.user?.id,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      sendSuccess(res, 200, data, 'Blog post archived');
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 router.get(
   '/products',
@@ -191,6 +322,26 @@ router.get(
       const params = res.locals.validatedParams as AdminOrderParamsInput;
       const data = await getAdminOrder(params.orderId);
       sendSuccess(res, 200, data, 'Admin order retrieved');
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  '/orders/:orderId/risk-review',
+  validateParams(adminOrderParamsSchema),
+  validateBody(adminUpdateOrderRiskReviewSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const params = res.locals.validatedParams as AdminOrderParamsInput;
+      const body = req.body as AdminUpdateOrderRiskReviewInput;
+      const data = await updateAdminOrderRiskReview(params.orderId, body, {
+        userId: req.user?.id,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      sendSuccess(res, 200, data, 'Order risk review updated');
     } catch (error) {
       next(error);
     }

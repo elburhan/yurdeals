@@ -101,6 +101,9 @@ export interface ProductListItem {
   approvalStatus: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
   isPublished: boolean;
   isFeatured: boolean;
+  isSoldOut: boolean;
+  isSoldOutOverride?: boolean;
+  marketingBadge: 'SELLING_FAST' | 'TRENDING' | null;
   isActive?: boolean;
   inventoryQuantity: number | null;
   preorderSlotsTotal: number | null;
@@ -108,6 +111,7 @@ export interface ProductListItem {
   preorderStartsAt: string | null;
   preorderEndsAt: string | null;
   estimatedArrivalAt: string | null;
+  pricingBatchLabel: string | null;
   trendingScore: number;
   salesVelocity7d: number;
   salesVelocity30d: number;
@@ -226,8 +230,12 @@ export interface AddressSummary {
   street: string;
   city: string;
   state: string;
+  lga: string | null;
+  area: string | null;
+  landmark: string | null;
   country: string;
   postalCode: string | null;
+  deliveryNotes: string | null;
   isDefault: boolean;
   createdAt: string;
   updatedAt: string;
@@ -363,6 +371,7 @@ export interface OrderTrackingData {
 export interface PublicOrderTrackingData {
   orderNumber: string;
   status: string;
+  stockType: 'IN_STOCK' | 'PREORDER';
   paymentStatus: string | null;
   shipmentStatus: string | null;
   eta: string | null;
@@ -384,6 +393,9 @@ export interface AdminProductSummary {
   approvalStatus: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
   isPublished: boolean;
   isFeatured: boolean;
+  isSoldOut: boolean;
+  isSoldOutOverride: boolean;
+  marketingBadge: 'SELLING_FAST' | 'TRENDING' | null;
   isActive: boolean;
   inventoryQuantity: number | null;
   preorderSlotsTotal: number | null;
@@ -391,9 +403,17 @@ export interface AdminProductSummary {
   preorderStartsAt: string | null;
   preorderEndsAt: string | null;
   estimatedArrivalAt: string | null;
+  fxAdjustmentPercent: number | null;
+  shippingBufferPercent: number | null;
+  preorderMarginPercent: number | null;
+  fxRateSnapshot: number | null;
+  supplierCostSnapshot: number | null;
+  shippingCostSnapshot: number | null;
+  pricingBatchLabel: string | null;
   trendingScore: number;
   primaryImage: ProductImageSummary | null;
   images: ProductImageSummary[];
+  variants: ProductVariantSummary[];
   createdAt: string;
   updatedAt: string;
 }
@@ -409,6 +429,8 @@ export interface AdminOrderListItem {
   customerType: 'REGISTERED' | 'GUEST';
   status: string;
   inspectionStatus?: string;
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  holdForManualReview: boolean;
   total: number;
   currency: string;
   customerName: string;
@@ -486,6 +508,13 @@ export interface AdminOrderDetailData {
   order: OrderSummary & {
     checkoutMethod: 'ONLINE' | 'WHATSAPP';
     customerType: 'REGISTERED' | 'GUEST';
+    riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+    riskFlags: string[];
+    riskReviewedAt: string | null;
+    riskReviewedBy: string | null;
+    riskReviewedByName: string | null;
+    holdForManualReview: boolean;
+    fraudNotes: string | null;
     customer: {
       id: string;
       name: string;
@@ -587,4 +616,20 @@ export interface BlogPostDetailData {
 
 export interface BlogCategoryListData {
   categories: BlogCategorySummary[];
+}
+
+export interface AdminBlogPostSummary extends BlogPostListItem {
+  updatedAt: string;
+}
+
+export interface AdminBlogPostDetail extends BlogPostDetail {
+  updatedAt: string;
+}
+
+export interface AdminBlogPostListData {
+  posts: AdminBlogPostSummary[];
+}
+
+export interface AdminBlogPostDetailData {
+  post: AdminBlogPostDetail;
 }

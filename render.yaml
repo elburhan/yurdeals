@@ -1,0 +1,56 @@
+services:
+  - type: web
+    name: yurdeals-backend
+    runtime: node
+    plan: starter
+    region: oregon
+    rootDir: .
+    buildCommand: npm ci && npm run build:shared && npm run db:generate -w apps/backend && npm run build:backend
+    preDeployCommand: npm run db:migrate:prod -w apps/backend
+    startCommand: npm run start -w apps/backend
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NODE_ENV
+        value: production
+      - key: API_VERSION
+        value: v1
+      - key: PORT
+        value: 4000
+      - key: DATABASE_URL
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_ACCESS_EXPIRES_IN_SECONDS
+        value: 900
+      - key: JWT_REFRESH_EXPIRES_IN_SECONDS
+        value: 604800
+      - key: COOKIE_SECRET
+        sync: false
+      - key: COOKIE_SAME_SITE
+        value: none
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: PAYSTACK_CALLBACK_URL
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: EMAIL_ENABLED
+        value: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_REPLY_TO
+        sync: false

@@ -100,15 +100,16 @@ export async function getProductDetail(slugOrId: string): Promise<ProductDetailD
 }
 
 export async function getHomeCatalog(): Promise<HomeCatalogData> {
-  const [categories, featuredProducts, preorderProducts] = await Promise.all([
+  const [categories, featuredProducts, preorderProducts, latestProducts] = await Promise.all([
     categoryRepository.findPublicCategories({ activeOnly: true }),
     productRepository.findFeaturedProducts(8),
     productRepository.findPreorderProducts(6),
+    productRepository.findLatestPublicProducts(8),
   ]);
 
   return {
     categories,
-    featuredProducts,
+    featuredProducts: featuredProducts.length > 0 ? featuredProducts : latestProducts,
     preorderProducts,
   };
 }

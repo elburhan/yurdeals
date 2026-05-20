@@ -29,6 +29,8 @@ const PRODUCT_LIST_SELECT = Prisma.validator<Prisma.ProductSelect>()({
   approvalStatus: true,
   isPublished: true,
   isFeatured: true,
+  isSoldOut: true,
+  marketingBadge: true,
   isActive: true,
   inventoryQuantity: true,
   preorderSlotsTotal: true,
@@ -36,6 +38,7 @@ const PRODUCT_LIST_SELECT = Prisma.validator<Prisma.ProductSelect>()({
   preorderStartsAt: true,
   preorderEndsAt: true,
   estimatedArrivalAt: true,
+  pricingBatchLabel: true,
   trendingScore: true,
   salesVelocity7d: true,
   salesVelocity30d: true,
@@ -58,6 +61,14 @@ const PRODUCT_LIST_SELECT = Prisma.validator<Prisma.ProductSelect>()({
       isPrimary: true,
     },
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+  },
+  variants: {
+    where: { isActive: true },
+    select: {
+      id: true,
+      stock: true,
+      isActive: true,
+    },
   },
 });
 
@@ -174,6 +185,17 @@ export class ProductRepository {
         { trendingScore: 'desc' },
         { createdAt: 'desc' },
       ],
+      take: limit,
+    });
+
+    return records.map(mapProductListItem);
+  }
+
+  async findLatestPublicProducts(limit: number): Promise<ProductListItem[]> {
+    const records = await prisma.product.findMany({
+      where: PUBLIC_PRODUCT_BASE_WHERE,
+      select: PRODUCT_LIST_SELECT,
+      orderBy: [{ createdAt: 'desc' }],
       take: limit,
     });
 
@@ -409,6 +431,9 @@ function mapProductListItem(record: ProductListRecord): ProductListItem {
     approvalStatus: record.approvalStatus,
     isPublished: record.isPublished,
     isFeatured: record.isFeatured,
+    isSoldOut: isProductSoldOut(record),
+    isSoldOutOverride: record.isSoldOut,
+    marketingBadge: record.marketingBadge,
     isActive: record.isActive,
     inventoryQuantity: record.inventoryQuantity,
     preorderSlotsTotal: record.preorderSlotsTotal,
@@ -416,6 +441,7 @@ function mapProductListItem(record: ProductListRecord): ProductListItem {
     preorderStartsAt: record.preorderStartsAt?.toISOString() ?? null,
     preorderEndsAt: record.preorderEndsAt?.toISOString() ?? null,
     estimatedArrivalAt: record.estimatedArrivalAt?.toISOString() ?? null,
+    pricingBatchLabel: record.pricingBatchLabel,
     trendingScore: Number(record.trendingScore),
     salesVelocity7d: record.salesVelocity7d,
     salesVelocity30d: record.salesVelocity30d,
@@ -425,6 +451,25 @@ function mapProductListItem(record: ProductListRecord): ProductListItem {
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };
+}
+
+function isProductSoldOut(record: Pick<
+  ProductListRecord,
+  'isSoldOut' | 'stockType' | 'inventoryQuantity' | 'preorderSlotsRemaining' | 'variants'
+>): boolean {
+  if (record.isSoldOut) {
+    return true;
+  }
+
+  if (record.stockType === ProductStockType.PREORDER) {
+    return record.preorderSlotsRemaining === 0;
+  }
+
+  if (record.variants.length > 0) {
+    return record.variants.every((variant) => variant.stock <= 0);
+  }
+
+  return record.inventoryQuantity === 0;
 }
 
 function mapProductDetail(record: ProductDetailRecord): ProductDetail {

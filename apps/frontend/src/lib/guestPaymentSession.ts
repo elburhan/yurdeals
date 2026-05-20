@@ -2,6 +2,8 @@
 // Guest Payment Session Bridge
 // ============================================
 
+import type { DeliveryStockType } from './deliveryEstimate';
+
 const GUEST_PAYMENT_SESSION_PREFIX = 'yurdeals_guest_payment';
 const GUEST_PAYMENT_SESSION_TTL_MS = 60 * 60 * 1000;
 
@@ -9,6 +11,7 @@ export interface GuestPaymentSession {
   orderId: string;
   paymentId: string;
   guestAccessToken: string;
+  deliveryStockType?: DeliveryStockType;
   createdAt: number;
 }
 

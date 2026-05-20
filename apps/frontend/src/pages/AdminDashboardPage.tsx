@@ -1,6 +1,8 @@
 import { type ChangeEvent, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type {
+  AdminBlogPostDetail,
+  AdminBlogPostSummary,
   AdminOrderDetailData,
   AdminOrderListItem,
   AdminOverviewData,
@@ -13,15 +15,22 @@ import { ProtectedRoute } from '../components/ProtectedRoute';
 import { formatPrice } from '../components/ProductCard';
 import { useAuth } from '../hooks/useAuth';
 import {
+  archiveAdminBlogPost,
+  uploadAdminArticleCoverImage,
   createAdminProduct,
+  createAdminBlogPost,
   deleteAdminProduct,
   disableAdminProduct,
+  getAdminBlogPost,
+  getAdminBlogPosts,
   getAdminOrder,
   getAdminOrders,
   getAdminOverview,
   getAdminProducts,
   getAdminShipments,
+  updateAdminOrderRiskReview,
   updateAdminOrderStatus,
+  updateAdminBlogPost,
   updateAdminProduct,
   uploadAdminProductImage,
 } from '../lib/adminApi';
@@ -42,11 +51,20 @@ const ORDER_STATUSES = [
 const DASHBOARD_TABS = [
   { id: 'orders', label: 'Orders' },
   { id: 'products', label: 'Products' },
+  { id: 'guides', label: 'Guides' },
   { id: 'shipments', label: 'Shipments' },
 ] as const;
 
 type DashboardTab = (typeof DASHBOARD_TABS)[number]['id'];
 type AdminOrderDetail = AdminOrderDetailData['order'];
+
+interface ProductVariantFormState {
+  id?: string;
+  name: string;
+  price: string;
+  stock: string;
+  sku: string;
+}
 
 interface ProductFormState {
   name: string;
@@ -62,9 +80,35 @@ interface ProductFormState {
   preorderStartsAt: string;
   preorderEndsAt: string;
   estimatedArrivalAt: string;
+  fxAdjustmentPercent: string;
+  shippingBufferPercent: string;
+  preorderMarginPercent: string;
+  fxRateSnapshot: string;
+  supplierCostSnapshot: string;
+  shippingCostSnapshot: string;
+  pricingBatchLabel: string;
   isFeatured: boolean;
+  isPublished: boolean;
+  isSoldOut: boolean;
+  marketingBadge: '' | 'SELLING_FAST' | 'TRENDING';
+  approvalStatus: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'ARCHIVED';
   isActive: boolean;
   imageUrls: string[];
+  variants: ProductVariantFormState[];
+}
+
+interface ArticleFormState {
+  title: string;
+  slug: string;
+  excerpt: string;
+  content: string;
+  categoryName: string;
+  tags: string;
+  featured: boolean;
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+  coverImage: string;
+  seoTitle: string;
+  seoDescription: string;
 }
 
 const emptyProductForm: ProductFormState = {
@@ -81,12 +125,39 @@ const emptyProductForm: ProductFormState = {
   preorderStartsAt: '',
   preorderEndsAt: '',
   estimatedArrivalAt: '',
+  fxAdjustmentPercent: '',
+  shippingBufferPercent: '',
+  preorderMarginPercent: '',
+  fxRateSnapshot: '',
+  supplierCostSnapshot: '',
+  shippingCostSnapshot: '',
+  pricingBatchLabel: '',
   isFeatured: false,
+  isPublished: true,
+  isSoldOut: false,
+  marketingBadge: '',
+  approvalStatus: 'APPROVED',
   isActive: true,
   imageUrls: ['', '', ''],
+  variants: [],
+};
+
+const emptyArticleForm: ArticleFormState = {
+  title: '',
+  slug: '',
+  excerpt: '',
+  content: '',
+  categoryName: 'Preorder Guide',
+  tags: '',
+  featured: false,
+  status: 'DRAFT',
+  coverImage: '',
+  seoTitle: '',
+  seoDescription: '',
 };
 
 const MIN_PRODUCT_IMAGE_SLOTS = 3;
+const MAX_ADMIN_IMAGE_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 function ensureMinimumImageSlots(imageUrls: string[]): string[] {
   const nextImageUrls = [...imageUrls];
@@ -130,6 +201,58 @@ function parseOptionalInteger(value: string, label: string): number | undefined 
   return parsed;
 }
 
+function parseOptionalDecimal(value: string, label: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${label} must be a non-negative number`);
+  }
+
+  return parsed;
+}
+
+function buildVariantPayload(variants: ProductVariantFormState[]):
+  | Array<{ id?: string; name: string; price: number; stock: number; sku?: string }>
+  | undefined {
+  const filledVariants = variants.filter((variant) =>
+    [variant.name, variant.price, variant.stock, variant.sku].some((value) => value.trim().length > 0),
+  );
+
+  if (filledVariants.length === 0) {
+    return variants.length > 0 ? [] : undefined;
+  }
+
+  return filledVariants.map((variant, index) => {
+    const name = variant.name.trim();
+    const price = Number(variant.price);
+    const stock = Number(variant.stock);
+
+    if (!name) {
+      throw new Error(`Variant ${index + 1} needs a name`);
+    }
+
+    if (!Number.isFinite(price) || price <= 0) {
+      throw new Error(`Variant ${index + 1} needs a valid price`);
+    }
+
+    if (!Number.isInteger(stock) || stock < 0) {
+      throw new Error(`Variant ${index + 1} stock must be a non-negative whole number`);
+    }
+
+    return {
+      ...(variant.id ? { id: variant.id } : {}),
+      name,
+      price,
+      stock,
+      ...(variant.sku.trim() ? { sku: variant.sku.trim() } : {}),
+    };
+  });
+}
+
 export default function AdminDashboardPage() {
   return (
     <ProtectedRoute roles={['ADMIN']}>
@@ -144,18 +267,25 @@ function AdminDashboardContent() {
   const [overview, setOverview] = useState<AdminOverviewData | null>(null);
   const [orders, setOrders] = useState<AdminOrderListItem[]>([]);
   const [products, setProducts] = useState<AdminProductSummary[]>([]);
+  const [articles, setArticles] = useState<AdminBlogPostSummary[]>([]);
   const [shipments, setShipments] = useState<ShipmentSummary[]>([]);
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [activeTab, setActiveTab] = useState<DashboardTab>('orders');
   const [orderStatusFilter, setOrderStatusFilter] = useState('');
   const [productStatusFilter, setProductStatusFilter] = useState('all');
+  const [articleStatusFilter, setArticleStatusFilter] = useState('all');
   const [editingProduct, setEditingProduct] = useState<AdminProductSummary | null>(null);
   const [productForm, setProductForm] = useState<ProductFormState>(emptyProductForm);
   const [isProductFormOpen, setIsProductFormOpen] = useState(false);
   const [isSavingProduct, setIsSavingProduct] = useState(false);
+  const [editingArticle, setEditingArticle] = useState<AdminBlogPostDetail | null>(null);
+  const [articleForm, setArticleForm] = useState<ArticleFormState>(emptyArticleForm);
+  const [isArticleFormOpen, setIsArticleFormOpen] = useState(false);
+  const [isSavingArticle, setIsSavingArticle] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<AdminOrderDetail | null>(null);
   const [isOrderDetailOpen, setIsOrderDetailOpen] = useState(false);
   const [isLoadingOrderDetail, setIsLoadingOrderDetail] = useState(false);
+  const [isSavingOrderRiskReview, setIsSavingOrderRiskReview] = useState(false);
   const [orderDetailError, setOrderDetailError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -164,17 +294,19 @@ function AdminDashboardContent() {
   async function loadDashboard() {
     setIsLoading(true);
     try {
-      const [overviewResponse, ordersResponse, productsResponse, shipmentsResponse] =
+      const [overviewResponse, ordersResponse, productsResponse, articlesResponse, shipmentsResponse] =
         await Promise.all([
           getAdminOverview(),
           getAdminOrders(orderStatusFilter || undefined),
           getAdminProducts(productStatusFilter),
+          getAdminBlogPosts(articleStatusFilter),
           getAdminShipments(),
         ]);
 
       setOverview(overviewResponse.data);
       setOrders(ordersResponse.data.orders);
       setProducts(productsResponse.data.products);
+      setArticles(articlesResponse.data.posts);
       setShipments(shipmentsResponse.data.shipments);
       setError('');
     } catch (requestError) {
@@ -195,7 +327,7 @@ function AdminDashboardContent() {
 
   useEffect(() => {
     void loadDashboard();
-  }, [orderStatusFilter, productStatusFilter]);
+  }, [orderStatusFilter, productStatusFilter, articleStatusFilter]);
 
   useEffect(() => {
     void loadCategories();
@@ -207,9 +339,43 @@ function AdminDashboardContent() {
   }
 
   async function handleOrderStatus(orderId: string, status: string) {
-    await updateAdminOrderStatus(orderId, status);
-    setSuccess('Order status updated');
-    await loadDashboard();
+    setError('');
+    setSuccess('');
+
+    try {
+      await updateAdminOrderStatus(orderId, status);
+      setSuccess('Order status updated');
+      await loadDashboard();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error ? requestError.message : 'Unable to update order status',
+      );
+    }
+  }
+
+  async function handleOrderRiskReview(
+    orderId: string,
+    input: {
+      hold_for_manual_review?: boolean;
+      fraud_notes?: string;
+      risk_level_override?: 'LOW' | 'MEDIUM' | 'HIGH';
+    },
+  ) {
+    setIsSavingOrderRiskReview(true);
+    setOrderDetailError('');
+
+    try {
+      const response = await updateAdminOrderRiskReview(orderId, input);
+      setSelectedOrder(response.data.order);
+      setSuccess('Order review updated');
+      await loadDashboard();
+    } catch (requestError) {
+      setOrderDetailError(
+        requestError instanceof Error ? requestError.message : 'Unable to update order review',
+      );
+    } finally {
+      setIsSavingOrderRiskReview(false);
+    }
   }
 
   async function openOrderDetail(orderId: string) {
@@ -263,7 +429,18 @@ function AdminDashboardContent() {
       preorderStartsAt: toDateTimeLocal(product.preorderStartsAt),
       preorderEndsAt: toDateTimeLocal(product.preorderEndsAt),
       estimatedArrivalAt: toDateTimeLocal(product.estimatedArrivalAt),
+      fxAdjustmentPercent: product.fxAdjustmentPercent?.toString() ?? '',
+      shippingBufferPercent: product.shippingBufferPercent?.toString() ?? '',
+      preorderMarginPercent: product.preorderMarginPercent?.toString() ?? '',
+      fxRateSnapshot: product.fxRateSnapshot?.toString() ?? '',
+      supplierCostSnapshot: product.supplierCostSnapshot?.toString() ?? '',
+      shippingCostSnapshot: product.shippingCostSnapshot?.toString() ?? '',
+      pricingBatchLabel: product.pricingBatchLabel ?? '',
       isFeatured: product.isFeatured,
+      isPublished: product.isPublished,
+      isSoldOut: product.isSoldOutOverride,
+      marketingBadge: product.marketingBadge ?? '',
+      approvalStatus: product.approvalStatus,
       isActive: product.isActive,
       imageUrls: ensureMinimumImageSlots(
         product.images.length > 0
@@ -272,6 +449,13 @@ function AdminDashboardContent() {
             ? [product.primaryImage.url]
             : [],
       ),
+      variants: product.variants.map((variant) => ({
+        id: variant.id,
+        name: variant.name,
+        price: String(variant.price),
+        stock: String(variant.stock),
+        sku: variant.sku ?? '',
+      })),
     });
     setError('');
     setSuccess('');
@@ -296,6 +480,28 @@ function AdminDashboardContent() {
       productForm.preorderSlotsRemaining,
       'Preorder slots remaining',
     );
+    const fxAdjustmentPercent = parseOptionalDecimal(
+      productForm.fxAdjustmentPercent,
+      'FX adjustment percent',
+    );
+    const shippingBufferPercent = parseOptionalDecimal(
+      productForm.shippingBufferPercent,
+      'Shipping buffer percent',
+    );
+    const preorderMarginPercent = parseOptionalDecimal(
+      productForm.preorderMarginPercent,
+      'Preorder margin percent',
+    );
+    const fxRateSnapshot = parseOptionalDecimal(productForm.fxRateSnapshot, 'FX rate snapshot');
+    const supplierCostSnapshot = parseOptionalDecimal(
+      productForm.supplierCostSnapshot,
+      'Supplier cost snapshot',
+    );
+    const shippingCostSnapshot = parseOptionalDecimal(
+      productForm.shippingCostSnapshot,
+      'Shipping cost snapshot',
+    );
+    const variants = buildVariantPayload(productForm.variants);
 
     if (name.length < 2) {
       throw new Error('Product name must be at least 2 characters');
@@ -335,7 +541,19 @@ function AdminDashboardContent() {
       ...(productForm.estimatedArrivalAt
         ? { estimated_arrival_at: new Date(productForm.estimatedArrivalAt).toISOString() }
         : {}),
+      ...(fxAdjustmentPercent !== undefined ? { fx_adjustment_percent: fxAdjustmentPercent } : {}),
+      ...(shippingBufferPercent !== undefined ? { shipping_buffer_percent: shippingBufferPercent } : {}),
+      ...(preorderMarginPercent !== undefined ? { preorder_margin_percent: preorderMarginPercent } : {}),
+      ...(fxRateSnapshot !== undefined ? { fx_rate_snapshot: fxRateSnapshot } : {}),
+      ...(supplierCostSnapshot !== undefined ? { supplier_cost_snapshot: supplierCostSnapshot } : {}),
+      ...(shippingCostSnapshot !== undefined ? { shipping_cost_snapshot: shippingCostSnapshot } : {}),
+      pricing_batch_label: productForm.pricingBatchLabel.trim(),
       is_featured: productForm.isFeatured,
+      is_published: productForm.isPublished,
+      is_sold_out: productForm.isSoldOut,
+      marketing_badge: productForm.marketingBadge || null,
+      approval_status: productForm.approvalStatus,
+      ...(variants !== undefined ? { variants } : {}),
       ...(imageUrls.length > 0 ? { images: imageUrls, image_url: imageUrls[0] } : {}),
     };
   }
@@ -410,6 +628,134 @@ function AdminDashboardContent() {
       await loadDashboard();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Unable to delete product');
+    }
+  }
+
+  function openNewArticleForm() {
+    setEditingArticle(null);
+    setArticleForm(emptyArticleForm);
+    setError('');
+    setSuccess('');
+    setIsArticleFormOpen(true);
+  }
+
+  async function openEditArticleForm(article: AdminBlogPostSummary) {
+    setError('');
+    setSuccess('');
+
+    try {
+      const response = await getAdminBlogPost(article.id);
+      const post = response.data.post;
+      setEditingArticle(post);
+      setArticleForm({
+        title: post.title,
+        slug: post.slug,
+        excerpt: post.excerpt,
+        content: post.content,
+        categoryName: post.category?.name ?? '',
+        tags: post.tags.join(', '),
+        featured: post.featured,
+        status: post.status,
+        coverImage: post.coverImage ?? '',
+        seoTitle: post.seoTitle ?? '',
+        seoDescription: post.seoDescription ?? '',
+      });
+      setIsArticleFormOpen(true);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Unable to load guide');
+    }
+  }
+
+  function closeArticleForm() {
+    setIsArticleFormOpen(false);
+    setEditingArticle(null);
+    setArticleForm(emptyArticleForm);
+  }
+
+  function buildArticlePayload() {
+    const tags = articleForm.tags
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+
+    return {
+      title: articleForm.title.trim(),
+      ...(articleForm.slug.trim() ? { slug: articleForm.slug.trim() } : {}),
+      excerpt: articleForm.excerpt.trim(),
+      content: articleForm.content.trim(),
+      ...(articleForm.categoryName.trim() ? { category_name: articleForm.categoryName.trim() } : {}),
+      tags,
+      featured: articleForm.featured,
+      status: articleForm.status,
+      ...(articleForm.coverImage.trim() ? { cover_image: articleForm.coverImage.trim() } : {}),
+      ...(articleForm.seoTitle.trim() ? { seo_title: articleForm.seoTitle.trim() } : {}),
+      ...(articleForm.seoDescription.trim()
+        ? { seo_description: articleForm.seoDescription.trim() }
+        : {}),
+    };
+  }
+
+  async function handleSaveArticle() {
+    setIsSavingArticle(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const payload = buildArticlePayload();
+
+      if (editingArticle) {
+        await updateAdminBlogPost(editingArticle.id, payload);
+        setSuccess('Guide updated');
+      } else {
+        await createAdminBlogPost(payload);
+        setSuccess('Guide created');
+      }
+
+      closeArticleForm();
+      await loadDashboard();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Unable to save guide');
+    } finally {
+      setIsSavingArticle(false);
+    }
+  }
+
+  async function handleArchiveArticle(article: AdminBlogPostSummary) {
+    const confirmed = window.confirm(
+      `Archive "${article.title}"? Archived guides are hidden from the public Guides page.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setError('');
+    setSuccess('');
+
+    try {
+      await archiveAdminBlogPost(article.id);
+      setSuccess('Guide archived');
+      await loadDashboard();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Unable to archive guide');
+    }
+  }
+
+  async function handleArticleStatus(
+    article: AdminBlogPostSummary,
+    status: ArticleFormState['status'],
+  ) {
+    setError('');
+    setSuccess('');
+
+    try {
+      await updateAdminBlogPost(article.id, { status });
+      setSuccess(status === 'PUBLISHED' ? 'Guide published' : 'Guide unpublished');
+      await loadDashboard();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error ? requestError.message : 'Unable to update guide status',
+      );
     }
   }
 
@@ -532,6 +878,18 @@ function AdminDashboardContent() {
           />
         )}
 
+        {activeTab === 'guides' && (
+          <GuidesPanel
+            articles={articles}
+            articleStatusFilter={articleStatusFilter}
+            onFilterChange={setArticleStatusFilter}
+            onOpenNew={openNewArticleForm}
+            onEdit={(article) => void openEditArticleForm(article)}
+            onStatusChange={(article, status) => void handleArticleStatus(article, status)}
+            onArchive={(article) => void handleArchiveArticle(article)}
+          />
+        )}
+
         {activeTab === 'shipments' && <ShipmentsPanel shipments={shipments} />}
       </section>
 
@@ -547,11 +905,24 @@ function AdminDashboardContent() {
         />
       )}
 
+      {isArticleFormOpen && (
+        <ArticleFormModal
+          editingArticle={editingArticle}
+          form={articleForm}
+          isSaving={isSavingArticle}
+          onChange={setArticleForm}
+          onClose={closeArticleForm}
+          onSave={() => void handleSaveArticle()}
+        />
+      )}
+
       {isOrderDetailOpen && (
         <OrderDetailDrawer
           order={selectedOrder}
           isLoading={isLoadingOrderDetail}
+          isSavingRiskReview={isSavingOrderRiskReview}
           error={orderDetailError}
+          onSaveRiskReview={(orderId, input) => void handleOrderRiskReview(orderId, input)}
           onClose={closeOrderDetail}
         />
       )}
@@ -603,6 +974,12 @@ function OrdersPanel({
               <div>
                 <p className="font-semibold text-surface-950">{order.orderNumber}</p>
                 <p className="text-xs text-surface-500">{formatDateTime(order.createdAt)}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <ChannelPill method={order.checkoutMethod} />
+                  <CustomerTypePill customerType={order.customerType} />
+                  <RiskLevelPill level={order.riskLevel} />
+                  {order.holdForManualReview ? <ManualReviewPill /> : null}
+                </div>
               </div>
               <StatusPill status={order.status} />
             </div>
@@ -663,6 +1040,8 @@ function OrdersPanel({
                   <div className="mt-2 flex flex-wrap gap-2">
                     <ChannelPill method={order.checkoutMethod} />
                     <CustomerTypePill customerType={order.customerType} />
+                    <RiskLevelPill level={order.riskLevel} />
+                    {order.holdForManualReview ? <ManualReviewPill /> : null}
                   </div>
                 </td>
                 <td>
@@ -713,14 +1092,33 @@ function OrdersPanel({
 function OrderDetailDrawer({
   order,
   isLoading,
+  isSavingRiskReview,
   error,
+  onSaveRiskReview,
   onClose,
 }: {
   order: AdminOrderDetail | null;
   isLoading: boolean;
+  isSavingRiskReview: boolean;
   error: string;
+  onSaveRiskReview: (
+    orderId: string,
+    input: {
+      hold_for_manual_review?: boolean;
+      fraud_notes?: string;
+      risk_level_override?: 'LOW' | 'MEDIUM' | 'HIGH';
+    },
+  ) => void;
   onClose: () => void;
 }) {
+  const [fraudNotesDraft, setFraudNotesDraft] = useState('');
+  const [holdForManualReviewDraft, setHoldForManualReviewDraft] = useState(false);
+
+  useEffect(() => {
+    setFraudNotesDraft(order?.fraudNotes ?? '');
+    setHoldForManualReviewDraft(order?.holdForManualReview ?? false);
+  }, [order]);
+
   return (
     <div className="fixed inset-0 z-50 bg-surface-950/50">
       <aside
@@ -772,6 +1170,11 @@ function OrderDetailDrawer({
                   <dl className="mt-4 grid gap-3 text-sm">
                     <InfoRow label="Status" value={order.status} />
                     <InfoRow label="Inspection" value={order.inspectionStatus ?? 'Not set'} />
+                    <InfoRow label="Risk band" value={order.riskLevel} />
+                    <InfoRow
+                      label="Manual review"
+                      value={order.holdForManualReview ? 'Required' : 'Not required'}
+                    />
                     <InfoRow label="Checkout method" value={order.checkoutMethod} />
                     <InfoRow label="Customer type" value={order.customerType} />
                     <InfoRow label="Payment reference" value={order.paymentReference ?? 'None'} />
@@ -795,7 +1198,16 @@ function OrderDetailDrawer({
                       label="Delivery phone"
                       value={order.shippingAddress?.phone ?? 'No delivery phone'}
                     />
-                    <InfoRow label="Address" value={formatAddress(order.shippingAddress)} />
+                    <InfoRow label="Street address" value={order.shippingAddress?.street ?? 'No address'} />
+                    <InfoRow label="Area / district" value={order.shippingAddress?.area ?? 'Not provided'} />
+                    <InfoRow label="City / town" value={order.shippingAddress?.city ?? 'Not provided'} />
+                    <InfoRow label="LGA" value={order.shippingAddress?.lga ?? 'Not provided'} />
+                    <InfoRow label="State" value={order.shippingAddress?.state ?? 'Not provided'} />
+                    <InfoRow label="Landmark" value={order.shippingAddress?.landmark ?? 'Not provided'} />
+                    <InfoRow
+                      label="Delivery notes"
+                      value={order.shippingAddress?.deliveryNotes ?? 'No delivery notes'}
+                    />
                   </dl>
                 </article>
 
@@ -812,6 +1224,96 @@ function OrderDetailDrawer({
                     <InfoRow label="Total" value={formatPrice(order.total, order.currency)} />
                   </dl>
                 </article>
+              </section>
+
+              <section className="rounded-2xl border border-surface-200 bg-white p-4 shadow-sm">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <h3 className="font-display text-lg font-bold text-surface-950">
+                      Order review
+                    </h3>
+                    <p className="text-sm text-surface-500">
+                      Orders that need extra review stay paused here until the ops team clears them for fulfillment.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <RiskLevelPill level={order.riskLevel} />
+                      {order.holdForManualReview ? <ManualReviewPill /> : null}
+                      {!order.holdForManualReview && order.riskReviewedAt ? <ReviewCompletedPill /> : null}
+                    </div>
+                  </div>
+                  <dl className="grid gap-2 text-sm lg:min-w-80">
+                    <InfoRow
+                      label="Reviewed at"
+                      value={order.riskReviewedAt ? formatDateTime(order.riskReviewedAt) : 'Not reviewed'}
+                    />
+                    <InfoRow
+                      label="Reviewed by"
+                      value={order.riskReviewedByName ?? order.riskReviewedBy ?? 'Not reviewed'}
+                    />
+                  </dl>
+                </div>
+
+                <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1.2fr]">
+                  <div className="rounded-xl border border-surface-200 p-4">
+                    <p className="text-sm font-semibold text-surface-900">Review signals</p>
+                    {order.riskFlags.length === 0 ? (
+                      <p className="mt-3 text-sm text-surface-500">
+                        No review signals are currently attached to this order.
+                      </p>
+                    ) : (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {order.riskFlags.map((flag) => (
+                          <span
+                            key={flag}
+                            className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800"
+                          >
+                            {formatRiskFlag(flag)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-surface-200 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-surface-900">Review controls</p>
+                      <label className="flex items-center gap-2 text-sm font-medium text-surface-700">
+                        <input
+                          type="checkbox"
+                          checked={holdForManualReviewDraft}
+                          onChange={(event) => setHoldForManualReviewDraft(event.target.checked)}
+                        />
+                        Needs review before fulfillment
+                      </label>
+                    </div>
+
+                    <label className="mt-4 grid gap-2 text-sm font-semibold text-surface-700">
+                      Fraud notes
+                      <textarea
+                        value={fraudNotesDraft}
+                        onChange={(event) => setFraudNotesDraft(event.target.value)}
+                        className="min-h-28 rounded-lg border border-surface-300 px-3 py-2 font-normal"
+                        placeholder="Record why the order was reviewed, what was confirmed, and whether it is safe to release."
+                      />
+                    </label>
+
+                    <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:justify-end">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onSaveRiskReview(order.id, {
+                            hold_for_manual_review: holdForManualReviewDraft,
+                            fraud_notes: fraudNotesDraft,
+                          })
+                        }
+                        disabled={isSavingRiskReview}
+                        className="min-h-11 rounded-full bg-primary-600 px-5 text-sm font-semibold text-white hover:bg-primary-700 disabled:bg-surface-300"
+                      >
+                        {isSavingRiskReview ? 'Saving...' : 'Save review'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </section>
 
               <section className="rounded-2xl border border-surface-200 bg-white p-4 shadow-sm">
@@ -1142,7 +1644,7 @@ function ProductsPanel({
                   {formatPrice(product.basePrice, product.currency)}
                 </p>
                 <p className="mt-1 text-xs text-surface-500">
-                  {product.isActive ? 'Active' : 'Inactive'} · {product.stockType}
+                  {getProductVisibilityLabel(product)} · {product.stockType}
                 </p>
               </div>
             </div>
@@ -1215,7 +1717,7 @@ function ProductsPanel({
                 </td>
                 <td>{product.categoryName}</td>
                 <td>{formatPrice(product.basePrice, product.currency)}</td>
-                <td>{product.isActive ? 'Active' : 'Inactive'}</td>
+                <td>{getProductVisibilityLabel(product)}</td>
                 <td>
                   <div className="flex gap-2">
                     <button
@@ -1251,6 +1753,238 @@ function ProductsPanel({
         </table>
       </div>
     </section>
+  );
+}
+
+function GuidesPanel({
+  articles,
+  articleStatusFilter,
+  onFilterChange,
+  onOpenNew,
+  onEdit,
+  onStatusChange,
+  onArchive,
+}: {
+  articles: AdminBlogPostSummary[];
+  articleStatusFilter: string;
+  onFilterChange: (value: string) => void;
+  onOpenNew: () => void;
+  onEdit: (article: AdminBlogPostSummary) => void;
+  onStatusChange: (article: AdminBlogPostSummary, status: ArticleFormState['status']) => void;
+  onArchive: (article: AdminBlogPostSummary) => void;
+}) {
+  return (
+    <section className="rounded-lg border border-surface-200 bg-white p-4 shadow-sm">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="font-display text-xl font-bold text-surface-950">Guides & articles</h2>
+          <p className="text-sm text-surface-500">
+            Create, publish, and archive educational guides for the public Guides page.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <select
+            value={articleStatusFilter}
+            onChange={(event) => onFilterChange(event.target.value)}
+            className="min-h-10 rounded-lg border border-surface-300 px-3 text-sm"
+            aria-label="Filter guides by status"
+          >
+            <option value="all">All guides</option>
+            <option value="DRAFT">Draft</option>
+            <option value="PUBLISHED">Published</option>
+            <option value="ARCHIVED">Archived</option>
+          </select>
+          <button
+            type="button"
+            onClick={onOpenNew}
+            className="min-h-10 rounded-lg bg-primary-600 px-4 text-sm font-semibold text-white hover:bg-primary-700"
+          >
+            New guide
+          </button>
+        </div>
+      </div>
+
+      {articles.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-surface-300 p-6 text-center">
+          <p className="font-semibold text-surface-900">No guides found</p>
+          <p className="mt-1 text-sm text-surface-500">
+            Create a draft guide first, then publish it when the copy is ready.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="space-y-3 md:hidden">
+            {articles.map((article) => (
+              <article key={article.id} className="rounded-xl border border-surface-200 p-4">
+                <div className="flex items-start gap-3">
+                  {article.coverImage ? (
+                    <img
+                      src={article.coverImage}
+                      alt=""
+                      loading="lazy"
+                      className="h-16 w-16 rounded-lg object-cover"
+                    />
+                  ) : (
+                    <div className="h-16 w-16 rounded-lg bg-primary-50" aria-hidden="true" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <BlogStatusBadge status={article.status} />
+                      {article.featured ? (
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                          Featured
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 font-semibold text-surface-950">{article.title}</p>
+                    <p className="mt-1 line-clamp-2 text-sm text-surface-500">
+                      {article.excerpt}
+                    </p>
+                    <p className="mt-2 text-xs text-surface-500">
+                      {article.category?.name ?? 'Uncategorized'} · {article.readingTimeMins} min
+                      read · Updated {formatDateTime(article.updatedAt)}
+                    </p>
+                  </div>
+                </div>
+                <GuideActions
+                  article={article}
+                  onEdit={onEdit}
+                  onStatusChange={onStatusChange}
+                  onArchive={onArchive}
+                />
+              </article>
+            ))}
+          </div>
+
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full min-w-[860px] text-left text-sm">
+              <thead className="border-b border-surface-200 text-xs uppercase text-surface-500">
+                <tr>
+                  <th className="py-3">Guide</th>
+                  <th>Category</th>
+                  <th>Status</th>
+                  <th>Views</th>
+                  <th>Updated</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-100">
+                {articles.map((article) => (
+                  <tr key={article.id}>
+                    <td className="py-3">
+                      <div className="flex items-center gap-3">
+                        {article.coverImage ? (
+                          <img
+                            src={article.coverImage}
+                            alt=""
+                            loading="lazy"
+                            className="h-12 w-12 rounded-lg object-cover"
+                          />
+                        ) : (
+                          <div className="h-12 w-12 rounded-lg bg-primary-50" aria-hidden="true" />
+                        )}
+                        <div className="min-w-0">
+                          <p className="max-w-80 truncate font-semibold text-surface-950">
+                            {article.title}
+                          </p>
+                          <p className="max-w-80 truncate text-xs text-surface-500">
+                            /blog/{article.slug}
+                          </p>
+                        </div>
+                      </div>
+                    </td>
+                    <td>{article.category?.name ?? 'Uncategorized'}</td>
+                    <td>
+                      <div className="flex flex-wrap gap-2">
+                        <BlogStatusBadge status={article.status} />
+                        {article.featured ? (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                            Featured
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td>{article.views}</td>
+                    <td>{formatDateTime(article.updatedAt)}</td>
+                    <td>
+                      <GuideActions
+                        article={article}
+                        onEdit={onEdit}
+                        onStatusChange={onStatusChange}
+                        onArchive={onArchive}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function GuideActions({
+  article,
+  onEdit,
+  onStatusChange,
+  onArchive,
+}: {
+  article: AdminBlogPostSummary;
+  onEdit: (article: AdminBlogPostSummary) => void;
+  onStatusChange: (article: AdminBlogPostSummary, status: ArticleFormState['status']) => void;
+  onArchive: (article: AdminBlogPostSummary) => void;
+}) {
+  const isPublished = article.status === 'PUBLISHED';
+  const isArchived = article.status === 'ARCHIVED';
+
+  return (
+    <div className="mt-4 flex flex-wrap gap-2 md:mt-0">
+      <button
+        type="button"
+        onClick={() => onEdit(article)}
+        className="min-h-10 rounded-lg border border-surface-300 px-3 text-sm font-semibold text-surface-700 hover:border-primary-300 hover:text-primary-700"
+      >
+        Edit
+      </button>
+      {!isArchived ? (
+        <button
+          type="button"
+          onClick={() => onStatusChange(article, isPublished ? 'DRAFT' : 'PUBLISHED')}
+          className={
+            isPublished
+              ? 'min-h-10 rounded-lg px-3 text-sm font-semibold text-amber-700 hover:bg-amber-50'
+              : 'min-h-10 rounded-lg px-3 text-sm font-semibold text-green-700 hover:bg-green-50'
+          }
+        >
+          {isPublished ? 'Unpublish' : 'Publish'}
+        </button>
+      ) : null}
+      {!isArchived ? (
+        <button
+          type="button"
+          onClick={() => onArchive(article)}
+          className="min-h-10 rounded-lg px-3 text-sm font-semibold text-red-700 hover:bg-red-50"
+        >
+          Archive
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function BlogStatusBadge({ status }: { status: AdminBlogPostSummary['status'] }) {
+  const classes = {
+    DRAFT: 'bg-surface-100 text-surface-700',
+    PUBLISHED: 'bg-green-100 text-green-800',
+    ARCHIVED: 'bg-red-100 text-red-700',
+  } satisfies Record<AdminBlogPostSummary['status'], string>;
+
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${classes[status]}`}>
+      {status.charAt(0) + status.slice(1).toLowerCase()}
+    </span>
   );
 }
 
@@ -1295,6 +2029,291 @@ function ShipmentsPanel({ shipments }: { shipments: ShipmentSummary[] }) {
         ))}
       </div>
     </section>
+  );
+}
+
+function ArticleFormModal({
+  editingArticle,
+  form,
+  isSaving,
+  onChange,
+  onClose,
+  onSave,
+}: {
+  editingArticle: AdminBlogPostDetail | null;
+  form: ArticleFormState;
+  isSaving: boolean;
+  onChange: (nextForm: ArticleFormState) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  const isEditing = editingArticle !== null;
+  const [isUploadingCover, setIsUploadingCover] = useState(false);
+  const [coverUploadError, setCoverUploadError] = useState('');
+
+  async function handleCoverImageUpload(event: ChangeEvent<HTMLInputElement>) {
+    const fileInput = event.currentTarget;
+    const file = fileInput.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      setCoverUploadError('Choose an image file for the guide cover.');
+      fileInput.value = '';
+      return;
+    }
+
+    if (file.size > MAX_ADMIN_IMAGE_UPLOAD_BYTES) {
+      setCoverUploadError('Guide cover image must be 5MB or smaller.');
+      fileInput.value = '';
+      return;
+    }
+
+    setIsUploadingCover(true);
+    setCoverUploadError('');
+
+    try {
+      const response = await uploadAdminArticleCoverImage(file);
+      onChange({ ...form, coverImage: response.data.url });
+    } catch (requestError) {
+      setCoverUploadError(
+        requestError instanceof Error ? requestError.message : 'Unable to upload guide cover',
+      );
+    } finally {
+      setIsUploadingCover(false);
+      fileInput.value = '';
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface-950/50 p-4">
+      <section
+        className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white p-5 shadow-xl"
+        aria-labelledby="article-form-title"
+      >
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-wide text-primary-700">
+              Guide management
+            </p>
+            <h2 id="article-form-title" className="font-display text-2xl font-bold text-surface-950">
+              {isEditing ? 'Edit guide' : 'New guide'}
+            </h2>
+            <p className="mt-1 text-sm text-surface-500">
+              Use plain text or simple HTML for now. Published guides appear on the public Guides
+              page.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="min-h-10 rounded-lg border border-surface-300 px-3 text-sm font-semibold text-surface-700"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="grid gap-1 text-sm font-semibold text-surface-700 sm:col-span-2">
+            Title
+            <input
+              value={form.title}
+              onChange={(event) => onChange({ ...form, title: event.target.value })}
+              className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+              placeholder="How preordering from China to Nigeria works"
+            />
+          </label>
+
+          <label className="grid gap-1 text-sm font-semibold text-surface-700">
+            Slug
+            <input
+              value={form.slug}
+              onChange={(event) => onChange({ ...form, slug: event.target.value })}
+              className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+              placeholder="how-preordering-works"
+            />
+          </label>
+
+          <label className="grid gap-1 text-sm font-semibold text-surface-700">
+            Category
+            <input
+              value={form.categoryName}
+              onChange={(event) => onChange({ ...form, categoryName: event.target.value })}
+              className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+              placeholder="Preorder Guide"
+            />
+          </label>
+
+          <label className="grid gap-1 text-sm font-semibold text-surface-700 sm:col-span-2">
+            Excerpt
+            <textarea
+              value={form.excerpt}
+              onChange={(event) => onChange({ ...form, excerpt: event.target.value })}
+              rows={3}
+              className="rounded-lg border border-surface-300 px-3 py-2 font-normal"
+              placeholder="Short summary shown on guide cards"
+            />
+          </label>
+
+          <label className="grid gap-1 text-sm font-semibold text-surface-700 sm:col-span-2">
+            Content
+            <textarea
+              value={form.content}
+              onChange={(event) => onChange({ ...form, content: event.target.value })}
+              rows={12}
+              className="rounded-lg border border-surface-300 px-3 py-2 font-mono text-sm font-normal"
+              placeholder="<h2>Step 1</h2><p>Explain the preorder flow...</p>"
+            />
+          </label>
+
+          <label className="grid gap-1 text-sm font-semibold text-surface-700">
+            Tags
+            <input
+              value={form.tags}
+              onChange={(event) => onChange({ ...form, tags: event.target.value })}
+              className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+              placeholder="preorder, delivery, Paystack"
+            />
+          </label>
+
+          <label className="grid gap-1 text-sm font-semibold text-surface-700">
+            Status
+            <select
+              value={form.status}
+              onChange={(event) =>
+                onChange({ ...form, status: event.target.value as ArticleFormState['status'] })
+              }
+              className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+            >
+              <option value="DRAFT">Draft</option>
+              <option value="PUBLISHED">Published</option>
+              <option value="ARCHIVED">Archived</option>
+            </select>
+          </label>
+
+          <div className="grid gap-3 rounded-xl border border-surface-200 p-4 sm:col-span-2">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-surface-700">Cover image</p>
+                <p className="mt-1 text-xs text-surface-500">
+                  Upload from your computer, or paste a Cloudinary/image URL below.
+                </p>
+              </div>
+              {form.coverImage ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCoverUploadError('');
+                    onChange({ ...form, coverImage: '' });
+                  }}
+                  className="min-h-10 rounded-lg border border-surface-300 px-3 text-sm font-semibold text-surface-700 hover:bg-surface-50"
+                >
+                  Remove image
+                </button>
+              ) : null}
+            </div>
+
+            {form.coverImage ? (
+              <div className="overflow-hidden rounded-xl border border-surface-200 bg-surface-50">
+                <img
+                  src={form.coverImage}
+                  alt="Guide cover preview"
+                  className="h-44 w-full object-cover sm:h-56"
+                />
+              </div>
+            ) : (
+              <div className="flex min-h-32 items-center justify-center rounded-xl border border-dashed border-surface-300 bg-surface-50 text-sm text-surface-500">
+                Cover preview appears here after upload.
+              </div>
+            )}
+
+            <label className="grid gap-1 text-sm font-semibold text-surface-700">
+              Upload cover image
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(event) => void handleCoverImageUpload(event)}
+                disabled={isUploadingCover}
+                className="block min-h-11 w-full rounded-lg border border-surface-300 px-3 py-2 text-sm font-normal file:mr-3 file:rounded-md file:border-0 file:bg-primary-50 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-primary-700 hover:file:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+            </label>
+
+            <label className="grid gap-1 text-sm font-semibold text-surface-700">
+              Cover image URL
+              <input
+                value={form.coverImage}
+                onChange={(event) => {
+                  setCoverUploadError('');
+                  onChange({ ...form, coverImage: event.target.value });
+                }}
+                className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+                placeholder="https://res.cloudinary.com/..."
+              />
+            </label>
+
+            {isUploadingCover ? (
+              <p className="rounded-lg bg-primary-50 px-3 py-2 text-sm font-medium text-primary-700">
+                Uploading cover image to Cloudinary...
+              </p>
+            ) : null}
+            {coverUploadError ? (
+              <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                {coverUploadError}
+              </p>
+            ) : null}
+          </div>
+
+          <label className="grid gap-1 text-sm font-semibold text-surface-700">
+            SEO title
+            <input
+              value={form.seoTitle}
+              onChange={(event) => onChange({ ...form, seoTitle: event.target.value })}
+              className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+              placeholder="Optional search title"
+            />
+          </label>
+
+          <label className="grid gap-1 text-sm font-semibold text-surface-700">
+            SEO description
+            <input
+              value={form.seoDescription}
+              onChange={(event) => onChange({ ...form, seoDescription: event.target.value })}
+              className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+              placeholder="Optional search description"
+            />
+          </label>
+
+          <label className="flex items-center gap-3 rounded-lg border border-surface-200 p-3 text-sm font-semibold text-surface-700 sm:col-span-2">
+            <input
+              type="checkbox"
+              checked={form.featured}
+              onChange={(event) => onChange({ ...form, featured: event.target.checked })}
+              className="h-4 w-4 rounded border-surface-300 text-primary-600"
+            />
+            Feature this guide on the public Guides page
+          </label>
+        </div>
+
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="min-h-11 rounded-lg border border-surface-300 px-4 text-sm font-semibold text-surface-700"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={isSaving}
+            className="min-h-11 rounded-lg bg-primary-600 px-4 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isSaving ? 'Saving...' : isEditing ? 'Save changes' : 'Create guide'}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -1378,6 +2397,37 @@ function ProductFormModal({
     nextImageUrls[imageIndex] = nextImageUrls[targetIndex] ?? '';
     nextImageUrls[targetIndex] = currentImageUrl ?? '';
     onChange({ ...form, imageUrls: nextImageUrls });
+  }
+
+  function handleAddVariant() {
+    onChange({
+      ...form,
+      variants: [
+        ...form.variants,
+        {
+          name: '',
+          price: form.basePrice,
+          stock: form.stockType === 'PREORDER' ? '0' : form.inventoryQuantity,
+          sku: '',
+        },
+      ],
+    });
+  }
+
+  function handleUpdateVariant(variantIndex: number, updates: Partial<ProductVariantFormState>) {
+    onChange({
+      ...form,
+      variants: form.variants.map((variant, index) =>
+        index === variantIndex ? { ...variant, ...updates } : variant,
+      ),
+    });
+  }
+
+  function handleRemoveVariant(variantIndex: number) {
+    onChange({
+      ...form,
+      variants: form.variants.filter((_, index) => index !== variantIndex),
+    });
   }
 
   return (
@@ -1531,6 +2581,95 @@ function ProductFormModal({
             />
           </label>
 
+          <div className="grid gap-3 rounded-lg border border-dashed border-primary-200 bg-primary-50/40 p-4 sm:col-span-2">
+            <div>
+              <p className="text-sm font-semibold text-surface-900">Preorder pricing protection</p>
+              <p className="text-xs leading-5 text-surface-600">
+                Optional operational inputs for preorder batches. These help document the FX and
+                landed-cost assumptions behind the current preorder price. They are not required
+                for regular products and internal cost snapshots are not shown to customers.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-1 text-sm font-semibold text-surface-700">
+                Pricing batch label
+                <input
+                  value={form.pricingBatchLabel}
+                  onChange={(event) => onChange({ ...form, pricingBatchLabel: event.target.value })}
+                  className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+                  placeholder="Batch A - May 2026"
+                />
+              </label>
+
+              <label className="grid gap-1 text-sm font-semibold text-surface-700">
+                FX rate snapshot
+                <input
+                  value={form.fxRateSnapshot}
+                  onChange={(event) => onChange({ ...form, fxRateSnapshot: event.target.value })}
+                  inputMode="decimal"
+                  className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+                  placeholder="Optional"
+                />
+              </label>
+
+              <label className="grid gap-1 text-sm font-semibold text-surface-700">
+                FX adjustment percent
+                <input
+                  value={form.fxAdjustmentPercent}
+                  onChange={(event) => onChange({ ...form, fxAdjustmentPercent: event.target.value })}
+                  inputMode="decimal"
+                  className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+                  placeholder="Optional"
+                />
+              </label>
+
+              <label className="grid gap-1 text-sm font-semibold text-surface-700">
+                Shipping buffer percent
+                <input
+                  value={form.shippingBufferPercent}
+                  onChange={(event) => onChange({ ...form, shippingBufferPercent: event.target.value })}
+                  inputMode="decimal"
+                  className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+                  placeholder="Optional"
+                />
+              </label>
+
+              <label className="grid gap-1 text-sm font-semibold text-surface-700">
+                Preorder margin percent
+                <input
+                  value={form.preorderMarginPercent}
+                  onChange={(event) => onChange({ ...form, preorderMarginPercent: event.target.value })}
+                  inputMode="decimal"
+                  className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+                  placeholder="Optional"
+                />
+              </label>
+
+              <label className="grid gap-1 text-sm font-semibold text-surface-700">
+                Supplier cost snapshot
+                <input
+                  value={form.supplierCostSnapshot}
+                  onChange={(event) => onChange({ ...form, supplierCostSnapshot: event.target.value })}
+                  inputMode="decimal"
+                  className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+                  placeholder="Optional"
+                />
+              </label>
+
+              <label className="grid gap-1 text-sm font-semibold text-surface-700">
+                Shipping cost snapshot
+                <input
+                  value={form.shippingCostSnapshot}
+                  onChange={(event) => onChange({ ...form, shippingCostSnapshot: event.target.value })}
+                  inputMode="decimal"
+                  className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+                  placeholder="Optional"
+                />
+              </label>
+            </div>
+          </div>
+
           <label className="grid gap-1 text-sm font-semibold text-surface-700 sm:col-span-2">
             Short description
             <input
@@ -1540,6 +2679,97 @@ function ProductFormModal({
               placeholder="Compact, practical, ready for small kitchens"
             />
           </label>
+
+          <div className="grid gap-3 sm:col-span-2">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-surface-700">Variants</p>
+                <p className="text-xs leading-5 text-surface-500">
+                  Optional. Use variants for sizes, colors, or models. Leave empty to use the main
+                  product price and inventory quantity.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleAddVariant}
+                className="min-h-10 rounded-lg border border-primary-200 px-4 text-sm font-semibold text-primary-700 hover:bg-primary-50"
+              >
+                Add variant
+              </button>
+            </div>
+
+            {form.variants.length > 0 ? (
+              <div className="space-y-3">
+                {form.variants.map((variant, variantIndex) => (
+                  <div
+                    key={variant.id ?? variantIndex}
+                    className="grid gap-3 rounded-lg border border-surface-200 p-3 sm:grid-cols-2"
+                  >
+                    <label className="grid gap-1 text-sm font-semibold text-surface-700">
+                      Variant name
+                      <input
+                        value={variant.name}
+                        onChange={(event) =>
+                          handleUpdateVariant(variantIndex, { name: event.target.value })
+                        }
+                        className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+                        placeholder="Black / 128GB"
+                      />
+                    </label>
+                    <label className="grid gap-1 text-sm font-semibold text-surface-700">
+                      SKU
+                      <input
+                        value={variant.sku}
+                        onChange={(event) =>
+                          handleUpdateVariant(variantIndex, { sku: event.target.value })
+                        }
+                        className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+                        placeholder="Optional"
+                      />
+                    </label>
+                    <label className="grid gap-1 text-sm font-semibold text-surface-700">
+                      Price
+                      <input
+                        value={variant.price}
+                        onChange={(event) =>
+                          handleUpdateVariant(variantIndex, { price: event.target.value })
+                        }
+                        inputMode="decimal"
+                        className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+                        placeholder={form.basePrice || '25000'}
+                      />
+                    </label>
+                    <label className="grid gap-1 text-sm font-semibold text-surface-700">
+                      Stock
+                      <input
+                        value={variant.stock}
+                        onChange={(event) =>
+                          handleUpdateVariant(variantIndex, { stock: event.target.value })
+                        }
+                        inputMode="numeric"
+                        className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+                        placeholder="0"
+                      />
+                    </label>
+                    <div className="sm:col-span-2">
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveVariant(variantIndex)}
+                        className="min-h-9 rounded-lg px-3 text-xs font-semibold text-red-600 hover:bg-red-50"
+                      >
+                        Remove variant
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-surface-300 bg-surface-50 px-3 py-4 text-sm text-surface-500">
+                No variants configured. Customers will buy this product using the main product
+                price.
+              </div>
+            )}
+          </div>
 
           <div className="grid gap-3 sm:col-span-2">
             <div>
@@ -1659,6 +2889,61 @@ function ProductFormModal({
             Featured
           </label>
 
+          <label className="flex min-h-11 items-center gap-3 rounded-lg border border-surface-200 px-3 text-sm font-semibold text-surface-700">
+            <input
+              type="checkbox"
+              checked={form.isPublished}
+              onChange={(event) => onChange({ ...form, isPublished: event.target.checked })}
+            />
+            Published to storefront
+          </label>
+
+          <label className="flex min-h-11 items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 text-sm font-semibold text-amber-800">
+            <input
+              type="checkbox"
+              checked={form.isSoldOut}
+              onChange={(event) => onChange({ ...form, isSoldOut: event.target.checked })}
+            />
+            Mark as sold out
+          </label>
+
+          <label className="grid gap-1 text-sm font-semibold text-surface-700">
+            Marketing badge
+            <select
+              value={form.marketingBadge}
+              onChange={(event) =>
+                onChange({
+                  ...form,
+                  marketingBadge: event.target.value as ProductFormState['marketingBadge'],
+                })
+              }
+              className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+            >
+              <option value="">No badge</option>
+              <option value="SELLING_FAST">Selling Fast</option>
+              <option value="TRENDING">Trending Item</option>
+            </select>
+          </label>
+
+          <label className="grid gap-1 text-sm font-semibold text-surface-700">
+            Approval status
+            <select
+              value={form.approvalStatus}
+              onChange={(event) =>
+                onChange({
+                  ...form,
+                  approvalStatus: event.target.value as ProductFormState['approvalStatus'],
+                })
+              }
+              className="min-h-11 rounded-lg border border-surface-300 px-3 font-normal"
+            >
+              <option value="APPROVED">Approved</option>
+              <option value="PENDING_REVIEW">Pending review</option>
+              <option value="REJECTED">Rejected</option>
+              <option value="ARCHIVED">Archived</option>
+            </select>
+          </label>
+
           {isEditing && (
             <label className="flex min-h-11 items-center gap-3 rounded-lg border border-surface-200 px-3 text-sm font-semibold text-surface-700">
               <input
@@ -1765,6 +3050,44 @@ function CustomerTypePill({ customerType }: { customerType: AdminOrderListItem['
   );
 }
 
+function RiskLevelPill({ level }: { level: AdminOrderListItem['riskLevel'] }) {
+  const styles = {
+    LOW: 'bg-emerald-50 text-emerald-700',
+    MEDIUM: 'bg-amber-50 text-amber-800',
+    HIGH: 'bg-red-50 text-red-700',
+  } satisfies Record<AdminOrderListItem['riskLevel'], string>;
+
+  return (
+    <span className={`rounded-full px-3 py-1 text-xs font-bold ${styles[level]}`}>
+      Risk {level.toLowerCase()}
+    </span>
+  );
+}
+
+function ManualReviewPill() {
+  return (
+    <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-bold text-red-800">
+      Needs review
+    </span>
+  );
+}
+
+function ReviewCompletedPill() {
+  return (
+    <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">
+      Review completed
+    </span>
+  );
+}
+
+function formatRiskFlag(flag: string): string {
+  return flag
+    .toLowerCase()
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -1774,20 +3097,32 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function formatAddress(address: AdminOrderDetail['shippingAddress']): string {
-  if (!address) {
-    return 'No delivery address';
-  }
-
-  return [address.street, address.city, address.state, address.country].filter(Boolean).join(', ');
-}
-
 function formatNullableBoolean(value: boolean | null): string {
   if (value === null) {
     return 'Unknown';
   }
 
   return value ? 'Yes' : 'No';
+}
+
+function getProductVisibilityLabel(product: AdminProductSummary): string {
+  if (!product.isActive) {
+    return 'Inactive';
+  }
+
+  if (product.isSoldOut) {
+    return 'Sold out';
+  }
+
+  if (!product.isPublished) {
+    return 'Unpublished';
+  }
+
+  if (product.approvalStatus !== 'APPROVED') {
+    return product.approvalStatus.replace(/_/g, ' ');
+  }
+
+  return 'Public';
 }
 
 function formatDateTime(value: string): string {

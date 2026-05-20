@@ -2,11 +2,20 @@
 // Admin Validation Schemas
 // ============================================
 
-import { OrderStatus, ProductStockType, ShipmentStatus } from '@prisma/client';
+import {
+  FraudRiskLevel,
+  OrderStatus,
+  ProductApprovalStatus,
+  ProductMarketingBadge,
+  ProductStockType,
+  ShipmentStatus,
+} from '@prisma/client';
 import { z } from 'zod';
 
 const optionalCuid = z.string().cuid('Invalid id').optional();
 const optionalDate = z.string().datetime('Invalid date').optional();
+const optionalNonNegativeDecimal = z.coerce.number().nonnegative().optional();
+const optionalPercent = z.coerce.number().min(0).max(100).optional();
 const optionalNullableDate = z
   .string()
   .trim()
@@ -28,6 +37,23 @@ const productImageUrl = z
   .url('Image URL must be a valid URL')
   .max(2048, 'Image URL must be at most 2048 characters');
 const optionalImageUrls = z.array(productImageUrl).min(1, 'At least one image is required').optional();
+const optionalMarketingBadge = z.preprocess(
+  (value) => (value === '' ? null : value),
+  z.nativeEnum(ProductMarketingBadge).nullable().optional(),
+);
+const adminProductVariantSchema = z.object({
+  id: z.string().cuid('Invalid variant id').optional(),
+  name: z.string().trim().min(1, 'Variant name is required').max(120),
+  price: z.coerce.number().positive('Variant price must be greater than 0'),
+  stock: z.coerce.number().int().nonnegative('Variant stock cannot be negative'),
+  sku: z
+    .string()
+    .trim()
+    .max(80)
+    .optional()
+    .or(z.literal('').transform(() => undefined)),
+});
+const optionalProductVariants = z.array(adminProductVariantSchema).optional();
 
 export const adminProductQuerySchema = z.object({
   status: z.enum(['active', 'inactive', 'all']).optional().default('all'),
@@ -54,20 +80,41 @@ const adminProductBaseSchema = z.object({
   sku: z.string().trim().max(80).optional(),
   weight: z.coerce.number().positive().optional(),
   is_featured: z.boolean().optional().default(false),
+  is_published: z.boolean().optional().default(true),
+  is_sold_out: z.boolean().optional().default(false),
+  isSoldOut: z.boolean().optional(),
+  marketing_badge: optionalMarketingBadge,
+  marketingBadge: optionalMarketingBadge,
+  approval_status: z.nativeEnum(ProductApprovalStatus).optional().default(ProductApprovalStatus.APPROVED),
   inventoryQuantity: optionalNonNegativeInt,
   preorderSlotsTotal: optionalNonNegativeInt,
   preorderSlotsRemaining: optionalNonNegativeInt,
   preorderStartsAt: optionalNullableDate,
   preorderEndsAt: optionalNullableDate,
   estimatedArrivalAt: optionalNullableDate,
+  fxAdjustmentPercent: optionalPercent,
+  shippingBufferPercent: optionalPercent,
+  preorderMarginPercent: optionalPercent,
+  fxRateSnapshot: optionalNonNegativeDecimal,
+  supplierCostSnapshot: optionalNonNegativeDecimal,
+  shippingCostSnapshot: optionalNonNegativeDecimal,
+  pricingBatchLabel: z.string().trim().max(80).optional(),
   inventory_quantity: optionalNonNegativeInt,
   preorder_slots_total: optionalNonNegativeInt,
   preorder_slots_remaining: optionalNonNegativeInt,
   preorder_starts_at: optionalNullableDate,
   preorder_ends_at: optionalNullableDate,
   estimated_arrival_at: optionalNullableDate,
+  fx_adjustment_percent: optionalPercent,
+  shipping_buffer_percent: optionalPercent,
+  preorder_margin_percent: optionalPercent,
+  fx_rate_snapshot: optionalNonNegativeDecimal,
+  supplier_cost_snapshot: optionalNonNegativeDecimal,
+  shipping_cost_snapshot: optionalNonNegativeDecimal,
+  pricing_batch_label: z.string().trim().max(80).optional(),
   image_url: optionalImageUrl,
   images: optionalImageUrls,
+  variants: optionalProductVariants,
 });
 
 function hasValidPreorderCapacity(input: {
@@ -149,6 +196,15 @@ export const adminUpdateOrderStatusSchema = z.object({
   status: z.nativeEnum(OrderStatus),
 });
 
+export const adminUpdateOrderRiskReviewSchema = z.object({
+  hold_for_manual_review: z.boolean().optional(),
+  fraud_notes: z.string().trim().max(2000, 'Fraud notes must be at most 2000 characters').optional(),
+  risk_level_override: z.nativeEnum(FraudRiskLevel).optional(),
+}).refine(
+  (input) => Object.keys(input).length > 0,
+  { message: 'At least one review field is required' },
+);
+
 export const adminShipmentQuerySchema = z.object({
   status: z.nativeEnum(ShipmentStatus).optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
@@ -162,4 +218,5 @@ export type AdminProductParamsInput = z.infer<typeof adminProductParamsSchema>;
 export type AdminOrderQueryInput = z.infer<typeof adminOrderQuerySchema>;
 export type AdminOrderParamsInput = z.infer<typeof adminOrderParamsSchema>;
 export type AdminUpdateOrderStatusInput = z.infer<typeof adminUpdateOrderStatusSchema>;
+export type AdminUpdateOrderRiskReviewInput = z.infer<typeof adminUpdateOrderRiskReviewSchema>;
 export type AdminShipmentQueryInput = z.infer<typeof adminShipmentQuerySchema>;

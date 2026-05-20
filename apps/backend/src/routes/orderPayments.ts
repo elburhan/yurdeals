@@ -37,7 +37,9 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const params = res.locals.validatedParams as OrderPaymentParamsInput;
-      const data = await initiateGuestPayment(params.orderId, req.body as InitiateGuestPaymentInput);
+      const data = await initiateGuestPayment(params.orderId, req.body as InitiateGuestPaymentInput, {
+        ipAddress: req.ip,
+      });
       sendSuccess(res, 201, data, 'Guest payment initiated');
     } catch (error) {
       next(error);
@@ -98,6 +100,9 @@ router.post(
         req.user.id,
         params.orderId,
         req.body as InitiatePaymentInput,
+        {
+          ipAddress: req.ip,
+        },
       );
       sendSuccess(res, 201, data, 'Payment initiated');
     } catch (error) {

@@ -24,6 +24,8 @@ const ADMIN_PRODUCT_SELECT = {
   approvalStatus: true,
   isPublished: true,
   isFeatured: true,
+  isSoldOut: true,
+  marketingBadge: true,
   isActive: true,
   inventoryQuantity: true,
   preorderSlotsTotal: true,
@@ -31,6 +33,13 @@ const ADMIN_PRODUCT_SELECT = {
   preorderStartsAt: true,
   preorderEndsAt: true,
   estimatedArrivalAt: true,
+  fxAdjustmentPercent: true,
+  shippingBufferPercent: true,
+  preorderMarginPercent: true,
+  fxRateSnapshot: true,
+  supplierCostSnapshot: true,
+  shippingCostSnapshot: true,
+  pricingBatchLabel: true,
   trendingScore: true,
   createdAt: true,
   updatedAt: true,
@@ -43,6 +52,19 @@ const ADMIN_PRODUCT_SELECT = {
       isPrimary: true,
     },
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+  },
+  variants: {
+    where: { isActive: true },
+    select: {
+      id: true,
+      name: true,
+      sku: true,
+      price: true,
+      stock: true,
+      attributes: true,
+      isActive: true,
+    },
+    orderBy: { createdAt: 'asc' },
   },
   category: {
     select: {
@@ -60,6 +82,23 @@ interface NormalizedInventoryFields {
   preorderStartsAt?: Date;
   preorderEndsAt?: Date;
   estimatedArrivalAt?: Date;
+  fxAdjustmentPercent?: number;
+  shippingBufferPercent?: number;
+  preorderMarginPercent?: number;
+  fxRateSnapshot?: number;
+  supplierCostSnapshot?: number;
+  shippingCostSnapshot?: number;
+  pricingBatchLabel?: string | null;
+}
+
+interface NormalizedPreorderPricingFields {
+  fxAdjustmentPercent?: number;
+  shippingBufferPercent?: number;
+  preorderMarginPercent?: number;
+  fxRateSnapshot?: number;
+  supplierCostSnapshot?: number;
+  shippingCostSnapshot?: number;
+  pricingBatchLabel?: string | null;
 }
 
 export interface AdminProductPageResult {
@@ -96,6 +135,7 @@ export class AdminProductRepository {
   async createProduct(input: AdminCreateProductInput): Promise<AdminProductSummary> {
     const imageUrls = normalizeProductImageUrls(input);
     const inventoryFields = normalizeInventoryFields(input);
+    const pricingFields = normalizePreorderPricingFields(input);
     const product = await prisma.product.create({
       data: {
         name: input.name,
@@ -107,12 +147,32 @@ export class AdminProductRepository {
         currency: input.currency,
         sourceCountry: 'China',
         stockType: input.stock_type,
-        approvalStatus: ProductApprovalStatus.APPROVED,
-        isPublished: true,
+        approvalStatus: input.approval_status ?? ProductApprovalStatus.APPROVED,
+        isPublished: input.is_published ?? true,
+        isSoldOut: input.is_sold_out ?? input.isSoldOut ?? false,
+        marketingBadge: input.marketing_badge ?? input.marketingBadge ?? null,
         sku: input.sku ?? null,
         weight: input.weight ?? null,
         isFeatured: input.is_featured,
         ...inventoryFields,
+        ...pricingFields,
+        ...(input.variants && input.variants.length > 0
+          ? {
+              variants: {
+                create: input.variants.map((variant) => ({
+                  name: variant.name,
+                  sku: normalizeVariantSku(
+                    variant.sku,
+                    `${input.sku ?? input.slug ?? input.name}-${variant.name}`,
+                  ),
+                  price: variant.price,
+                  stock: variant.stock,
+                  attributes: {},
+                  isActive: true,
+                })),
+              },
+            }
+          : {}),
         ...(imageUrls
           ? {
               images: {
@@ -153,7 +213,16 @@ export class AdminProductRepository {
           ...(input.weight !== undefined ? { weight: input.weight ?? null } : {}),
           ...(input.is_featured !== undefined ? { isFeatured: input.is_featured } : {}),
           ...(input.is_active !== undefined ? { isActive: input.is_active } : {}),
+          ...(input.is_published !== undefined ? { isPublished: input.is_published } : {}),
+          ...(input.is_sold_out !== undefined || input.isSoldOut !== undefined
+            ? { isSoldOut: input.is_sold_out ?? input.isSoldOut }
+            : {}),
+          ...(input.marketing_badge !== undefined || input.marketingBadge !== undefined
+            ? { marketingBadge: input.marketing_badge ?? input.marketingBadge }
+            : {}),
+          ...(input.approval_status !== undefined ? { approvalStatus: input.approval_status } : {}),
           ...normalizeInventoryFields(input),
+          ...normalizePreorderPricingFields(input),
         },
         select: { id: true, name: true },
       });
@@ -169,6 +238,10 @@ export class AdminProductRepository {
             isPrimary: index === 0,
           })),
         });
+      }
+
+      if (input.variants !== undefined) {
+        await syncProductVariants(tx, productId, input.variants);
       }
 
       return tx.product.findUniqueOrThrow({
@@ -211,6 +284,19 @@ function createSlug(name: string): string {
   return `${base}-${Date.now().toString(36)}`;
 }
 
+function normalizeVariantSku(sku: string | undefined, fallbackBase: string): string {
+  if (sku?.trim()) {
+    return sku.trim();
+  }
+
+  const base = fallbackBase
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return `${base || 'VARIANT'}-${Date.now().toString(36).toUpperCase()}`.slice(0, 80);
+}
+
 function mapAdminProduct(product: AdminProductRecord): AdminProductSummary {
   const primaryImage = product.images.find((image) => image.isPrimary) ?? product.images[0] ?? null;
 
@@ -227,6 +313,9 @@ function mapAdminProduct(product: AdminProductRecord): AdminProductSummary {
     approvalStatus: product.approvalStatus,
     isPublished: product.isPublished,
     isFeatured: product.isFeatured,
+    isSoldOut: isAdminProductSoldOut(product),
+    isSoldOutOverride: product.isSoldOut,
+    marketingBadge: product.marketingBadge,
     isActive: product.isActive,
     inventoryQuantity: product.inventoryQuantity,
     preorderSlotsTotal: product.preorderSlotsTotal,
@@ -234,12 +323,98 @@ function mapAdminProduct(product: AdminProductRecord): AdminProductSummary {
     preorderStartsAt: product.preorderStartsAt?.toISOString() ?? null,
     preorderEndsAt: product.preorderEndsAt?.toISOString() ?? null,
     estimatedArrivalAt: product.estimatedArrivalAt?.toISOString() ?? null,
+    fxAdjustmentPercent: product.fxAdjustmentPercent ? Number(product.fxAdjustmentPercent) : null,
+    shippingBufferPercent: product.shippingBufferPercent ? Number(product.shippingBufferPercent) : null,
+    preorderMarginPercent: product.preorderMarginPercent ? Number(product.preorderMarginPercent) : null,
+    fxRateSnapshot: product.fxRateSnapshot ? Number(product.fxRateSnapshot) : null,
+    supplierCostSnapshot: product.supplierCostSnapshot ? Number(product.supplierCostSnapshot) : null,
+    shippingCostSnapshot: product.shippingCostSnapshot ? Number(product.shippingCostSnapshot) : null,
+    pricingBatchLabel: product.pricingBatchLabel,
     trendingScore: Number(product.trendingScore),
     primaryImage,
     images: product.images,
+    variants: product.variants.map((variant) => ({
+      id: variant.id,
+      name: variant.name,
+      sku: variant.sku,
+      price: Number(variant.price),
+      stock: variant.stock,
+      attributes: variant.attributes,
+      isActive: variant.isActive,
+    })),
     createdAt: product.createdAt.toISOString(),
     updatedAt: product.updatedAt.toISOString(),
   };
+}
+
+async function syncProductVariants(
+  tx: Prisma.TransactionClient,
+  productId: string,
+  variants: NonNullable<AdminUpdateProductInput['variants']>,
+): Promise<void> {
+  const existingVariants = await tx.productVariant.findMany({
+    where: { productId },
+    select: { id: true, sku: true },
+  });
+  const existingIds = new Set(existingVariants.map((variant) => variant.id));
+  const existingSkuById = new Map(
+    existingVariants.map((variant) => [variant.id, variant.sku]),
+  );
+  const incomingExistingIds = variants
+    .map((variant) => variant.id)
+    .filter((id): id is string => typeof id === 'string' && existingIds.has(id));
+
+  await tx.productVariant.updateMany({
+    where: {
+      productId,
+      ...(incomingExistingIds.length > 0 ? { id: { notIn: incomingExistingIds } } : {}),
+    },
+    data: { isActive: false },
+  });
+
+  for (const [index, variant] of variants.entries()) {
+    if (variant.id && existingIds.has(variant.id)) {
+      await tx.productVariant.update({
+        where: { id: variant.id },
+        data: {
+          name: variant.name,
+          sku: variant.sku ?? existingSkuById.get(variant.id),
+          price: variant.price,
+          stock: variant.stock,
+          isActive: true,
+        },
+      });
+      continue;
+    }
+
+    await tx.productVariant.create({
+      data: {
+        productId,
+        name: variant.name,
+        sku: normalizeVariantSku(variant.sku, `${productId}-${variant.name}-${index + 1}`),
+        price: variant.price,
+        stock: variant.stock,
+        attributes: {},
+        isActive: true,
+      },
+    });
+  }
+}
+
+function isAdminProductSoldOut(product: AdminProductRecord): boolean {
+  if (product.isSoldOut) {
+    return true;
+  }
+
+  if (product.stockType === 'PREORDER') {
+    return product.preorderSlotsRemaining === 0;
+  }
+
+  if (product.variants.length > 0) {
+    return product.variants.every((variant) => variant.stock <= 0);
+  }
+
+  return product.inventoryQuantity === 0;
 }
 
 function normalizeInventoryFields(
@@ -259,6 +434,28 @@ function normalizeInventoryFields(
     ...(preorderStartsAt !== undefined ? { preorderStartsAt: new Date(preorderStartsAt) } : {}),
     ...(preorderEndsAt !== undefined ? { preorderEndsAt: new Date(preorderEndsAt) } : {}),
     ...(estimatedArrivalAt !== undefined ? { estimatedArrivalAt: new Date(estimatedArrivalAt) } : {}),
+  };
+}
+
+function normalizePreorderPricingFields(
+  input: AdminCreateProductInput | AdminUpdateProductInput,
+): NormalizedPreorderPricingFields {
+  const fxAdjustmentPercent = input.fx_adjustment_percent ?? input.fxAdjustmentPercent;
+  const shippingBufferPercent = input.shipping_buffer_percent ?? input.shippingBufferPercent;
+  const preorderMarginPercent = input.preorder_margin_percent ?? input.preorderMarginPercent;
+  const fxRateSnapshot = input.fx_rate_snapshot ?? input.fxRateSnapshot;
+  const supplierCostSnapshot = input.supplier_cost_snapshot ?? input.supplierCostSnapshot;
+  const shippingCostSnapshot = input.shipping_cost_snapshot ?? input.shippingCostSnapshot;
+  const pricingBatchLabel = input.pricing_batch_label ?? input.pricingBatchLabel;
+
+  return {
+    ...(fxAdjustmentPercent !== undefined ? { fxAdjustmentPercent } : {}),
+    ...(shippingBufferPercent !== undefined ? { shippingBufferPercent } : {}),
+    ...(preorderMarginPercent !== undefined ? { preorderMarginPercent } : {}),
+    ...(fxRateSnapshot !== undefined ? { fxRateSnapshot } : {}),
+    ...(supplierCostSnapshot !== undefined ? { supplierCostSnapshot } : {}),
+    ...(shippingCostSnapshot !== undefined ? { shippingCostSnapshot } : {}),
+    ...(pricingBatchLabel !== undefined ? { pricingBatchLabel: pricingBatchLabel || null } : {}),
   };
 }
 

@@ -15,12 +15,14 @@ import {
 import { InitiateGuestPaymentInput, InitiatePaymentInput } from '../schemas/payment.schema';
 import { FlutterwaveGateway } from './payment-gateways/flutterwave.gateway';
 import { writeAuditLog } from './audit.service';
+import { evaluateAndPersistOrderRisk } from './fraudRisk.service';
 import { notifyPaymentFailed, notifyPaymentSuccess } from './notification.service';
 import { PaymentGateway, ProviderEvent } from './payment-gateways/paymentGateway.types';
 import { PaystackGateway } from './payment-gateways/paystack.gateway';
 import { handleOrderStatusTransition } from './shipmentEvent.service';
 import { mapPayment } from '../repositories/order.repository';
 import { verifyGuestOrderAccess } from './guestOrderAccess.service';
+import { isFlutterwaveEnabled } from '../config';
 
 const gateways = {
   PAYSTACK: new PaystackGateway(),
@@ -31,6 +33,7 @@ export async function initiatePayment(
   userId: string,
   orderId: string,
   input: InitiatePaymentInput,
+  riskContext?: { ipAddress?: string },
 ): Promise<PaymentInitiationData> {
   const provider = input.provider as Extract<PaymentProvider, 'PAYSTACK' | 'FLUTTERWAVE'>;
   const gateway = getGateway(provider);
@@ -90,6 +93,12 @@ export async function initiatePayment(
     provider,
   });
 
+  await evaluateAndPersistOrderRisk({
+    orderId: order.id,
+    ipAddress: riskContext?.ipAddress,
+    stage: 'PAYMENT_INITIATED',
+  });
+
   return {
     payment,
     authorizationUrl: result.authorizationUrl,
@@ -101,6 +110,7 @@ export async function initiatePayment(
 export async function initiateGuestPayment(
   orderId: string,
   input: InitiateGuestPaymentInput,
+  riskContext?: { ipAddress?: string },
 ): Promise<PaymentInitiationData> {
   const provider = input.provider as Extract<PaymentProvider, 'PAYSTACK' | 'FLUTTERWAVE'>;
   const gateway = getGateway(provider);
@@ -161,6 +171,12 @@ export async function initiateGuestPayment(
     provider,
   });
 
+  await evaluateAndPersistOrderRisk({
+    orderId: order.id,
+    ipAddress: riskContext?.ipAddress,
+    stage: 'PAYMENT_INITIATED',
+  });
+
   return {
     payment,
     authorizationUrl: result.authorizationUrl,
@@ -217,7 +233,7 @@ export async function verifyPayment(
     throw new AppError('Payment not found', 404, 'PAYMENT_NOT_FOUND');
   }
 
-  return verifyPaymentRecord(payment);
+  return verifyPaymentRecord(payment, 'manual');
 }
 
 export async function verifyGuestPayment(
@@ -235,7 +251,13 @@ export async function verifyGuestPayment(
     throw new AppError('Payment not found', 404, 'PAYMENT_NOT_FOUND');
   }
 
-  return verifyPaymentRecord(payment);
+  return verifyPaymentRecord(payment, 'manual');
+}
+
+export async function verifyPaymentRecordForReconciliation(
+  payment: VerifiablePaymentRecord,
+): Promise<PaymentStatusData> {
+  return verifyPaymentRecord(payment, 'reconciliation');
 }
 
 export async function chargeAuthorization(
@@ -302,7 +324,7 @@ export async function chargeAuthorization(
     );
   }
 
-  return verifyPaymentRecord(verifiablePayment);
+  return verifyPaymentRecord(verifiablePayment, 'manual');
 }
 
 export async function handlePaymentWebhook(
@@ -393,13 +415,27 @@ export async function handlePaymentWebhook(
   const context = await paymentRepository.findPaymentEventContext(payment.id);
 
   if (context && result.statusChanged && payment.status === 'SUCCESS') {
+    const riskEvaluation = await evaluateAndPersistOrderRisk({
+      orderId: context.order.id,
+      stage: 'PAYMENT_SUCCESS',
+    });
     await notifyPaymentSuccess(
       context.order.userId,
       context.order,
       context.payment,
       buildGuestNotificationRecipient(context),
     );
-    await handleOrderStatusTransition(context.order.id, 'PAYMENT_CONFIRMED');
+    if (!riskEvaluation?.holdForManualReview) {
+      await handleOrderStatusTransition(context.order.id, 'PAYMENT_CONFIRMED');
+    } else {
+        logger.warn('Skipping automatic fulfillment transition for paid order that still needs review', {
+          orderId: context.order.id,
+          orderNumber: context.order.orderNumber,
+          paymentId: context.payment.id,
+        riskLevel: riskEvaluation.riskLevel,
+        riskFlags: riskEvaluation.riskFlags,
+      });
+    }
     await writeAuditLog({
       userId: context.order.userId,
       action: 'PAYMENT_WEBHOOK_SUCCESS',
@@ -417,6 +453,10 @@ export async function handlePaymentWebhook(
   }
 
   if (context && result.statusChanged && payment.status === 'FAILED') {
+    await evaluateAndPersistOrderRisk({
+      orderId: context.order.id,
+      stage: 'PAYMENT_FAILED',
+    });
     await notifyPaymentFailed(context.order.userId, context.order, context.payment);
     await writeAuditLog({
       userId: context.order.userId,
@@ -489,11 +529,12 @@ export async function verifyPaymentReturn(params: {
 
   // Paystack recommends verifying after redirect/callback as well.
   // This keeps the redirect path safe even if the webhook is delayed.
-  await verifyPaymentRecord(payment);
+  await verifyPaymentRecord(payment, 'callback');
 }
 
 async function verifyPaymentRecord(
   payment: VerifiablePaymentRecord,
+  source: 'manual' | 'callback' | 'reconciliation',
 ): Promise<PaymentStatusData> {
   if (!shouldVerifyPayment(payment.status)) {
     return { payment: mapPayment(payment) };
@@ -513,6 +554,7 @@ async function verifyPaymentRecord(
     orderId: payment.order.id,
     provider: payment.provider,
     reference,
+    source,
   });
 
   const event = await gateway.verifyTransaction(reference);
@@ -534,16 +576,31 @@ async function verifyPaymentRecord(
     const context = await paymentRepository.findPaymentEventContext(result.payment.id);
 
     if (context) {
+      const riskEvaluation = await evaluateAndPersistOrderRisk({
+        orderId: context.order.id,
+        stage: 'PAYMENT_SUCCESS',
+      });
       await notifyPaymentSuccess(
         context.order.userId,
         context.order,
         context.payment,
         buildGuestNotificationRecipient(context),
       );
-      await handleOrderStatusTransition(context.order.id, 'PAYMENT_CONFIRMED');
+      if (!riskEvaluation?.holdForManualReview) {
+        await handleOrderStatusTransition(context.order.id, 'PAYMENT_CONFIRMED');
+      } else {
+        logger.warn('Skipping automatic fulfillment transition for verified order that still needs review', {
+          orderId: context.order.id,
+          orderNumber: context.order.orderNumber,
+          paymentId: context.payment.id,
+          riskLevel: riskEvaluation.riskLevel,
+          riskFlags: riskEvaluation.riskFlags,
+          source,
+        });
+      }
       await writeAuditLog({
         userId: context.order.userId,
-        action: 'PAYMENT_VERIFIED_SUCCESS',
+        action: getVerificationAuditAction(source, 'SUCCESS'),
         entity: 'Payment',
         entityId: context.payment.id,
         newData: {
@@ -552,6 +609,7 @@ async function verifyPaymentRecord(
           reference: event.reference,
           amount: event.amount,
           currency: event.currency,
+          source,
         },
       });
     }
@@ -561,10 +619,14 @@ async function verifyPaymentRecord(
     const context = await paymentRepository.findPaymentEventContext(result.payment.id);
 
     if (context) {
+      await evaluateAndPersistOrderRisk({
+        orderId: context.order.id,
+        stage: 'PAYMENT_FAILED',
+      });
       await notifyPaymentFailed(context.order.userId, context.order, context.payment);
       await writeAuditLog({
         userId: context.order.userId,
-        action: 'PAYMENT_VERIFIED_FAILED',
+        action: getVerificationAuditAction(source, 'FAILED'),
         entity: 'Payment',
         entityId: context.payment.id,
         newData: {
@@ -573,6 +635,7 @@ async function verifyPaymentRecord(
           reference: event.reference,
           amount: event.amount,
           currency: event.currency,
+          source,
         },
       });
     }
@@ -584,6 +647,10 @@ async function verifyPaymentRecord(
 function getGateway(
   provider: Extract<PaymentProvider, 'PAYSTACK' | 'FLUTTERWAVE'>,
 ): PaymentGateway {
+  if (provider === PaymentProvider.FLUTTERWAVE && !isFlutterwaveEnabled) {
+    throw new AppError('Flutterwave payments are not enabled.', 503, 'PAYMENT_PROVIDER_DISABLED');
+  }
+
   return gateways[provider];
 }
 
@@ -609,6 +676,21 @@ async function verifyPaystackEvent(event: ProviderEvent): Promise<ProviderEvent>
 
 function shouldVerifyPayment(status: PaymentStatusData['payment']['status']): boolean {
   return status === PaymentStatus.PENDING || status === PaymentStatus.AUTHORIZED;
+}
+
+function getVerificationAuditAction(
+  source: 'manual' | 'callback' | 'reconciliation',
+  outcome: 'SUCCESS' | 'FAILED',
+): string {
+  if (source === 'reconciliation') {
+    return outcome === 'SUCCESS' ? 'PAYMENT_RECONCILIATION_SUCCESS' : 'PAYMENT_RECONCILIATION_FAILED';
+  }
+
+  if (source === 'callback') {
+    return outcome === 'SUCCESS' ? 'PAYMENT_CALLBACK_SUCCESS' : 'PAYMENT_CALLBACK_FAILED';
+  }
+
+  return outcome === 'SUCCESS' ? 'PAYMENT_VERIFIED_SUCCESS' : 'PAYMENT_VERIFIED_FAILED';
 }
 
 function buildGuestNotificationRecipient(

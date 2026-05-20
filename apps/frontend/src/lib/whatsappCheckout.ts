@@ -57,9 +57,13 @@ function getCustomerName(customer: WhatsappCustomer | null, address: AddressSumm
 function formatAddress(address: AddressSummary): string {
   return [
     address.street,
+    address.area,
     address.city,
+    address.lga,
     address.state,
     address.country,
+    address.landmark ? `Landmark: ${address.landmark}` : '',
+    address.deliveryNotes ? `Notes: ${address.deliveryNotes}` : '',
     address.postalCode,
   ]
     .filter(Boolean)

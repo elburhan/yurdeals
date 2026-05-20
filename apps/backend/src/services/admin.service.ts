@@ -2,7 +2,7 @@
 // Admin Service
 // ============================================
 
-import { OrderStatus } from '@prisma/client';
+import { FraudRiskLevel, OrderStatus } from '@prisma/client';
 import {
   AdminOrderDetailData,
   AdminOrderListData,
@@ -20,10 +20,12 @@ import {
   AdminOrderQueryInput,
   AdminProductQueryInput,
   AdminShipmentQueryInput,
+  AdminUpdateOrderRiskReviewInput,
   AdminUpdateProductInput,
 } from '../schemas/admin.schema';
 import { handleOrderStatusTransition } from './shipmentEvent.service';
 import { AuditContext, writeAuditLog } from './audit.service';
+import { assertOrderStatusAllowedWhileRiskHeld } from './fraudRisk.service';
 
 export async function getAdminOverview(): Promise<AdminOverviewData> {
   return adminOrderRepository.getOverview();
@@ -119,6 +121,14 @@ export async function updateAdminOrderStatus(
   status: OrderStatus,
   auditContext?: AuditContext,
 ): Promise<AdminOrderDetailData> {
+  const riskGate = await adminOrderRepository.findOrderRiskGate(orderId);
+
+  if (!riskGate) {
+    throw new AppError('Order not found', 404, 'ORDER_NOT_FOUND');
+  }
+
+  assertOrderStatusAllowedWhileRiskHeld(riskGate, status);
+
   const data = await adminOrderRepository.updateOrderStatus(orderId, status);
   await handleOrderStatusTransition(orderId, status);
   await writeAuditLog({
@@ -128,6 +138,50 @@ export async function updateAdminOrderStatus(
     entityId: orderId,
     newData: { status, orderNumber: data.order.orderNumber },
   });
+  return data;
+}
+
+export async function updateAdminOrderRiskReview(
+  orderId: string,
+  input: AdminUpdateOrderRiskReviewInput,
+  auditContext?: AuditContext,
+): Promise<AdminOrderDetailData> {
+  if (!auditContext?.userId) {
+    throw new AppError('Admin review requires an authenticated user', 401, 'UNAUTHORIZED');
+  }
+
+  const nextHoldForManualReview =
+    typeof input.hold_for_manual_review === 'boolean' ? input.hold_for_manual_review : undefined;
+  const nextFraudNotes =
+    typeof input.fraud_notes === 'string' ? (input.fraud_notes.trim() || null) : undefined;
+  const riskLevelOverride =
+    input.risk_level_override === 'LOW' ||
+    input.risk_level_override === 'MEDIUM' ||
+    input.risk_level_override === 'HIGH'
+      ? input.risk_level_override
+      : undefined;
+
+  const data = await adminOrderRepository.updateOrderRiskReview(orderId, {
+    holdForManualReview: nextHoldForManualReview,
+    fraudNotes: nextFraudNotes,
+    riskLevelOverride: riskLevelOverride as FraudRiskLevel | undefined,
+    reviewedByUserId: auditContext.userId,
+  });
+
+  await writeAuditLog({
+    ...auditContext,
+    action: 'ADMIN_ORDER_RISK_REVIEW_UPDATED',
+    entity: 'Order',
+    entityId: orderId,
+    newData: {
+      holdForManualReview: data.order.holdForManualReview,
+      riskLevel: data.order.riskLevel,
+      riskFlags: data.order.riskFlags,
+      fraudNotes: data.order.fraudNotes,
+      reviewedAt: data.order.riskReviewedAt,
+    },
+  });
+
   return data;
 }
 

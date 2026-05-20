@@ -10,6 +10,8 @@ import {
   getGuestPaymentSession,
 } from '../lib/guestPaymentSession';
 import { useAuth } from '../hooks/useAuth';
+import { getOrder } from '../lib/orderApi';
+import { getDeliveryEstimate, inferDeliveryStockType, type DeliveryStockType } from '../lib/deliveryEstimate';
 
 export default function PaymentReturnPage() {
   return <PaymentReturnContent />;
@@ -27,9 +29,41 @@ function PaymentReturnContent() {
   const needsGuestRecovery = !isAuthLoading && !isAuthenticated && !guestAccessToken && orderId && paymentId;
   const orderNumber = searchParams.get('orderNumber') ?? orderId;
   const [payment, setPayment] = useState<PaymentSummary | null>(null);
+  const [deliveryStockType, setDeliveryStockType] = useState<DeliveryStockType | null>(
+    storedGuestSession?.deliveryStockType ?? null,
+  );
   const [error, setError] = useState('');
   const [isPolling, setIsPolling] = useState(!needsGuestRecovery);
   const pendingTimedOut = !isPolling && payment?.status === 'PENDING';
+  const deliveryEstimate = deliveryStockType ? getDeliveryEstimate(deliveryStockType) : null;
+
+  useEffect(() => {
+    if (!orderId || isAuthLoading || !isAuthenticated) {
+      return;
+    }
+
+    let isMounted = true;
+
+    getOrder(orderId)
+      .then((response) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setDeliveryStockType(
+          inferDeliveryStockType(response.data.order.items.map((item) => item.stockTypeSnapshot)),
+        );
+      })
+      .catch(() => {
+        if (isMounted) {
+          setDeliveryStockType(null);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isAuthenticated, isAuthLoading, orderId]);
 
   useEffect(() => {
     if (!orderId || !paymentId) {
@@ -94,7 +128,7 @@ function PaymentReturnContent() {
         <div className="mx-auto max-w-lg rounded-lg border border-surface-200 bg-white p-6 text-center">
           <h1 className="font-display text-2xl font-bold text-surface-950">
             {payment?.status === 'SUCCESS'
-              ? 'Thank you! Your preorder has been received.'
+              ? "Payment confirmed. We're preparing your order."
               : 'Payment status'}
           </h1>
           <div className="mt-4 text-left">
@@ -140,10 +174,18 @@ function PaymentReturnContent() {
               {payment.status === 'SUCCESS' && (
                 <div className="space-y-2">
                   <p className="rounded-lg bg-emerald-50 p-3 font-semibold text-emerald-700">
-                    Estimated delivery: 25-40 days.
+                    Payment confirmed and your order is now being prepared.
                   </p>
+                  {deliveryEstimate && (
+                    <p className={`rounded-lg border p-3 font-medium ${deliveryEstimate.panelClassName} ${deliveryEstimate.textClassName}`}>
+                      <span className="inline-flex items-center gap-2">
+                        <span aria-hidden="true">{deliveryEstimate.icon}</span>
+                        <span>{deliveryEstimate.label}</span>
+                      </span>
+                    </p>
+                  )}
                   <p className="rounded-lg bg-primary-50 p-3 font-medium text-primary-800">
-                    Receipt has been sent to your email.
+                    Receipt has been sent to your email. We may contact you if we need any additional confirmation before dispatch.
                   </p>
                 </div>
               )}

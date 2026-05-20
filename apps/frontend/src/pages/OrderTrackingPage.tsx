@@ -17,6 +17,7 @@ import {
   getOrderTracking,
   lookupPublicOrderTracking,
 } from '../lib/trackingApi';
+import { getDeliveryEstimate, inferDeliveryStockType } from '../lib/deliveryEstimate';
 
 interface LookupFormState {
   phone: string;
@@ -273,6 +274,10 @@ function OrderTrackingContent() {
 }
 
 function TrackedOrderCard({ tracked }: { tracked: { order: OrderSummary; tracking: OrderTrackingData } }) {
+  const deliveryEstimate = getDeliveryEstimate(
+    inferDeliveryStockType(tracked.order.items.map((item) => item.stockTypeSnapshot)),
+  );
+
   return (
     <article className="rounded-lg border border-surface-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -289,6 +294,10 @@ function TrackedOrderCard({ tracked }: { tracked: { order: OrderSummary; trackin
               Delivery to {tracked.order.shippingAddress.city}, {tracked.order.shippingAddress.state}
             </p>
           )}
+          <p className={`mt-2 inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${deliveryEstimate.badgeClassName}`}>
+            <span aria-hidden="true">{deliveryEstimate.icon}</span>
+            <span>{deliveryEstimate.label}</span>
+          </p>
         </div>
         <div className="text-right text-sm">
           <p className="font-semibold text-surface-950">
@@ -322,6 +331,8 @@ function TrackedOrderCard({ tracked }: { tracked: { order: OrderSummary; trackin
 }
 
 function PublicTrackedOrderCard({ tracked }: { tracked: PublicOrderTrackingData }) {
+  const deliveryEstimate = getDeliveryEstimate(tracked.stockType);
+
   return (
     <article className="rounded-lg border border-surface-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -333,6 +344,10 @@ function PublicTrackedOrderCard({ tracked }: { tracked: PublicOrderTrackingData 
           </p>
           <p className="mt-1 text-sm text-surface-500">
             Payment: {tracked.paymentStatus ?? 'Pending'} · Shipment: {tracked.shipmentStatus ?? 'Awaiting update'}
+          </p>
+          <p className={`mt-2 inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${deliveryEstimate.badgeClassName}`}>
+            <span aria-hidden="true">{deliveryEstimate.icon}</span>
+            <span>{deliveryEstimate.label}</span>
           </p>
         </div>
         <div className="text-right text-sm">

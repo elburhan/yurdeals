@@ -18,7 +18,8 @@ The detail panel is visibility-only. It does not change payment state, retry pay
 - Items: product names, variants when present, quantities, unit prices, line totals, and inspection flags.
 - Inventory reservations: current item holds created when Paystack payment is initialized.
 - Payment attempts: every recorded payment attempt for the order.
-- Payment and webhook timeline: safe summaries of payment events received by the backend.
+- Payment and webhook timeline: safe summaries of payment events received by the backend,
+  including reconciliation attempts.
 
 ## Inventory reservations
 
@@ -69,6 +70,9 @@ Check:
 - whether amount and currency matched,
 - whether the event status is `SUCCESS`, `FAILED`, `PENDING`, or `ABANDONED`,
 - whether the provider transaction ID is present.
+- whether recovery ran through `payment.reconciliation_started`,
+  `payment.reconciliation_verified`, `payment.reconciliation_failed`, or
+  `payment.reconciliation_released`.
 
 ## When a customer says “I paid but it still says pending”
 
@@ -85,9 +89,12 @@ Check:
    - `RELEASED` or `EXPIRED` means retry will need to check availability again.
 5. Check the timeline:
    - If no webhook event exists, Paystack may not have sent the webhook yet, or the customer may not have completed payment.
+   - If reconciliation events exist, the backend re-queried Paystack after the callback/webhook window.
+   - `payment.reconciliation_verified` plus `transaction.verify` means Paystack verification returned a provider result.
    - If amount/currency mismatch appears, escalate to engineering.
    - Reservation events such as `inventory.reservation_created`, `inventory.reservation_confirmed`, `inventory.reservation_released`, and `inventory.reservation_failed` explain inventory movement.
-6. Do not manually mark payment as paid from this panel. Manual reconciliation is intentionally not implemented in this phase.
+6. If the customer has proof of debit but the order remains pending, run the protected admin reconciliation endpoint or scheduled reconciliation command, then re-check the timeline.
+7. Do not manually mark payment as paid from this panel. Escalate with the order number and Paystack reference if Paystack verify still does not confirm success.
 
 ## Security notes
 

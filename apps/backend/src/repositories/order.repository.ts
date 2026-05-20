@@ -35,8 +35,12 @@ const ADDRESS_SELECT = {
   street: true,
   city: true,
   state: true,
+  lga: true,
+  area: true,
+  landmark: true,
   country: true,
   postalCode: true,
+  deliveryNotes: true,
   isDefault: true,
   createdAt: true,
   updatedAt: true,
@@ -127,6 +131,8 @@ const ORDER_EVENT_SELECT = {
   orderNumber: true,
   userId: true,
   status: true,
+  riskLevel: true,
+  holdForManualReview: true,
 } satisfies Prisma.OrderSelect;
 
 const ORDER_TRACKING_SELECT = {
@@ -182,12 +188,17 @@ const PUBLIC_TRACKING_LOOKUP_SELECT = {
     select: {
       name: true,
       quantity: true,
+      stockTypeSnapshot: true,
     },
     orderBy: { id: 'asc' },
   },
   shippingAddress: {
     select: {
       phone: true,
+      lga: true,
+      area: true,
+      landmark: true,
+      deliveryNotes: true,
     },
   },
 } satisfies Prisma.OrderSelect;
@@ -215,6 +226,7 @@ interface CartCheckoutItem {
     isPublished: boolean;
     approvalStatus: ProductApprovalStatus;
     stockType: ProductStockType;
+    isSoldOut: boolean;
     inventoryQuantity: number | null;
     preorderSlotsRemaining: number | null;
     preorderStartsAt: Date | null;
@@ -384,6 +396,7 @@ export class OrderRepository {
                   isPublished: true,
                   approvalStatus: true,
                   stockType: true,
+                  isSoldOut: true,
                   inventoryQuantity: true,
                   preorderSlotsRemaining: true,
                   preorderStartsAt: true,
@@ -476,6 +489,7 @@ export class OrderRepository {
           basePrice: true,
           currency: true,
           stockType: true,
+          isSoldOut: true,
           inventoryQuantity: true,
           preorderSlotsRemaining: true,
           preorderStartsAt: true,
@@ -563,7 +577,11 @@ export class OrderRepository {
           street: guestStreet,
           city: input.guest.city,
           state: input.guest.state,
+          lga: input.guest.lga,
+          area: input.guest.area,
+          landmark: input.guest.landmark,
           country: 'Nigeria',
+          deliveryNotes: input.guest.delivery_notes ?? null,
           isDefault: true,
         },
         select: { id: true },
@@ -767,7 +785,7 @@ function buildGuestOrderNotes(input: CreateGuestOrderInput): string {
 }
 
 function buildGuestStreet(guest: CreateGuestOrderInput['guest']): string {
-  return [guest.address_line, guest.area, guest.city, guest.state].filter(Boolean).join(', ');
+  return [guest.street, guest.address_line].filter(Boolean).join(', ');
 }
 
 function splitFullName(name: string): { firstName: string; lastName: string } {
@@ -836,8 +854,12 @@ function mapOrder(order: OrderRecord): OrderSummary {
           street: order.shippingAddress.street,
           city: order.shippingAddress.city,
           state: order.shippingAddress.state,
+          lga: order.shippingAddress.lga,
+          area: order.shippingAddress.area,
+          landmark: order.shippingAddress.landmark,
           country: order.shippingAddress.country,
           postalCode: order.shippingAddress.postalCode,
+          deliveryNotes: order.shippingAddress.deliveryNotes,
           isDefault: order.shippingAddress.isDefault,
           createdAt: order.shippingAddress.createdAt.toISOString(),
           updatedAt: order.shippingAddress.updatedAt.toISOString(),

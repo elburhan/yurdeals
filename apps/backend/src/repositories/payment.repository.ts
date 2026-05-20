@@ -144,6 +144,17 @@ export interface ProcessWebhookResult {
   eventId: string | null;
 }
 
+export interface PaymentReconciliationCandidate extends VerifiablePaymentRecord {}
+
+export interface PaymentEventAuditInput {
+  paymentId: string;
+  provider: PaymentProvider;
+  eventType: string;
+  status: PaymentStatus;
+  payload: Prisma.InputJsonValue;
+  eventId?: string | null;
+}
+
 export class PaymentRepository {
   async prepareOwnedPaymentAttempt(
     userId: string,
@@ -408,6 +419,50 @@ export class PaymentRepository {
       },
       select: VERIFIABLE_PAYMENT_SELECT,
     });
+  }
+
+  async findPendingPaymentsForReconciliation(input: {
+    olderThan: Date;
+    limit: number;
+  }): Promise<PaymentReconciliationCandidate[]> {
+    return prisma.payment.findMany({
+      where: {
+        provider: PaymentProvider.PAYSTACK,
+        status: { in: [PaymentStatus.PENDING, PaymentStatus.AUTHORIZED] },
+        updatedAt: { lte: input.olderThan },
+        order: {
+          status: OrderStatus.PENDING,
+        },
+      },
+      select: VERIFIABLE_PAYMENT_SELECT,
+      orderBy: { updatedAt: 'asc' },
+      take: input.limit,
+    });
+  }
+
+  async recordPaymentEvent(input: PaymentEventAuditInput): Promise<void> {
+    try {
+      await prisma.paymentEvent.create({
+        data: {
+          paymentId: input.paymentId,
+          provider: input.provider,
+          eventType: input.eventType,
+          eventId: input.eventId ?? null,
+          status: input.status,
+          payload: input.payload,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002' &&
+        input.eventId
+      ) {
+        return;
+      }
+
+      throw error;
+    }
   }
 
   async processWebhookEvent(event: ProviderEvent): Promise<ProcessWebhookResult> {

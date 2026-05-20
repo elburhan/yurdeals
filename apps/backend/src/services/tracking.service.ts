@@ -7,6 +7,7 @@ import { AppError } from '../middleware/errorHandler';
 import { orderRepository, PublicTrackingLookupRecord } from '../repositories/order.repository';
 import { shipmentEventRepository } from '../repositories/shipmentEvent.repository';
 import { PublicOrderTrackingQueryInput } from '../schemas/tracking.schema';
+import { ProductStockType } from '@prisma/client';
 
 export async function getOrderTracking(
   userId: string,
@@ -128,6 +129,9 @@ async function buildPublicTrackingData(
   return {
     orderNumber: order.orderNumber,
     status: order.status,
+    stockType: order.items.some((item) => item.stockTypeSnapshot === ProductStockType.PREORDER)
+      ? 'PREORDER'
+      : 'IN_STOCK',
     paymentStatus: latestPayment,
     shipmentStatus: latestShipmentStatus,
     eta: tracking.eta,
