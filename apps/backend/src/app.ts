@@ -13,11 +13,13 @@ import {
   notFoundHandler,
   errorHandler,
   requestLogger,
+  csrfProtection,
 } from './middleware';
 import routes from './routes';
 import paymentWebhooksRouter from './routes/paymentWebhooks';
 import paystackWebhookRouter from './routes/paystackWebhook';
 import { verifyPaymentReturn } from './services/payment.service';
+import { setupSentryExpressErrorHandler } from './observability/sentry';
 
 const app = express();
 const allowedOrigins = env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
@@ -46,7 +48,7 @@ app.use(
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'ngrok-skip-browser-warning'],
   }),
 );
 
@@ -81,6 +83,9 @@ app.use(cookieParser(env.COOKIE_SECRET));
 
 // ---- Compression ----
 app.use(compression());
+
+// ---- CSRF Protection (webhook raw-body routes are mounted above this point) ----
+app.use(csrfProtection);
 
 // ---- Payment Return Redirect ----
 app.get('/payment-return', async (req, res, next) => {
@@ -123,6 +128,9 @@ app.use(`/api/${env.API_VERSION}`, routes);
 
 // ---- 404 Handler ----
 app.use(notFoundHandler);
+
+// ---- Sentry Error Capture (observes before API response formatting) ----
+setupSentryExpressErrorHandler(app);
 
 // ---- Global Error Handler ----
 app.use(errorHandler);

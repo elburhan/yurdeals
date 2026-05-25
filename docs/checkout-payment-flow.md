@@ -69,6 +69,28 @@ POST /api/v1/admin/payments/reconcile
 ```
 11. Successful payment marks the order `PAID`
 
+## Paystack Live-Mode Safety
+
+The production Paystack flow must keep these responsibilities separate:
+
+- Browser callback returns the customer from Paystack and may trigger backend verification, but it is not trusted as proof of success.
+- Webhook delivery must use the raw request body and a valid `x-paystack-signature`.
+- Signed Paystack webhooks still trigger backend transaction verification before state changes.
+- Reconciliation is the fallback when callback or webhook delivery is delayed or missed.
+
+Before live mode, run:
+
+```bash
+npm run paystack:readiness:check -w apps/backend -- --live
+```
+
+Dashboard URLs:
+
+- Callback: `https://api.yourdomain.com/payment-return`
+- Webhook: `https://api.yourdomain.com/api/v1/payments/paystack/webhook`
+
+Never manually mark a payment successful from frontend callback data. Use webhook, manual verify, or reconciliation so amount, currency, reference, duplicate event, fraud review, and inventory reservation rules stay intact.
+
 ## Ownership Rules
 
 - Authenticated checkout attaches new orders only to the currently authenticated user and one of that user's saved addresses.

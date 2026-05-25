@@ -19,6 +19,7 @@ interface EnvConfig {
   JWT_REFRESH_EXPIRES_IN_SECONDS: number;
   COOKIE_SECRET: string;
   COOKIE_SAME_SITE: 'lax' | 'strict' | 'none';
+  CSRF_ENABLED: boolean;
   CORS_ORIGIN: string;
   FRONTEND_URL: string;
   RATE_LIMIT_WINDOW_MS: number;
@@ -62,6 +63,9 @@ interface EnvConfig {
   EMAIL_FROM: string;
   EMAIL_REPLY_TO: string;
   EMAIL_ENABLED: boolean;
+  SENTRY_DSN: string;
+  SENTRY_ENVIRONMENT: string;
+  SENTRY_TRACES_SAMPLE_RATE: number;
 }
 
 function getEnvVar(key: string, fallback?: string): string {
@@ -86,6 +90,20 @@ function getEnvBoolean(key: string, fallback: boolean): boolean {
   const value = process.env[key];
   if (value === undefined) return fallback;
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
+function getEnvRate(key: string, fallback: number): number {
+  const value = process.env[key];
+  if (value === undefined || value.trim().length === 0) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    throw new Error(`Environment variable ${key} must be a number between 0 and 1`);
+  }
+
+  return parsed;
 }
 
 function getCookieSameSite(fallback: EnvConfig['COOKIE_SAME_SITE']): EnvConfig['COOKIE_SAME_SITE'] {
@@ -167,6 +185,7 @@ export const env: EnvConfig = {
   JWT_REFRESH_EXPIRES_IN_SECONDS: getEnvInt('JWT_REFRESH_EXPIRES_IN_SECONDS', 604800),
   COOKIE_SECRET: getEnvVar('COOKIE_SECRET'),
   COOKIE_SAME_SITE: getCookieSameSite(process.env.NODE_ENV === 'production' ? 'none' : 'lax'),
+  CSRF_ENABLED: getEnvBoolean('CSRF_ENABLED', process.env.NODE_ENV === 'production'),
   CORS_ORIGIN: getEnvVar('CORS_ORIGIN', 'http://localhost:5173'),
   FRONTEND_URL: getEnvVar('FRONTEND_URL', 'http://localhost:5173'),
   RATE_LIMIT_WINDOW_MS: getEnvInt('RATE_LIMIT_WINDOW_MS', 60000),
@@ -210,10 +229,14 @@ export const env: EnvConfig = {
   EMAIL_FROM: getEnvVar('EMAIL_FROM', 'YurDeals <orders@yurdeals.com>'),
   EMAIL_REPLY_TO: getEnvVar('EMAIL_REPLY_TO', 'support@yurdeals.com'),
   EMAIL_ENABLED: getEnvBoolean('EMAIL_ENABLED', false),
+  SENTRY_DSN: getOptionalRuntimeEnvVar('SENTRY_DSN'),
+  SENTRY_ENVIRONMENT: getEnvVar('SENTRY_ENVIRONMENT', process.env.NODE_ENV ?? 'development'),
+  SENTRY_TRACES_SAMPLE_RATE: getEnvRate('SENTRY_TRACES_SAMPLE_RATE', 0),
 };
 
 export const isProduction = env.NODE_ENV === 'production';
 export const isDevelopment = env.NODE_ENV === 'development';
+export const isSentryEnabled = Boolean(env.SENTRY_DSN);
 export const isFlutterwaveEnabled = Boolean(
   env.FLUTTERWAVE_SECRET_KEY &&
     env.FLUTTERWAVE_PUBLIC_KEY &&

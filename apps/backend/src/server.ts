@@ -4,7 +4,15 @@
 
 import app from './app';
 import { env, isFlutterwaveEnabled, prisma } from './config';
+import {
+  captureAndFlushException,
+  initSentry,
+  installSentryProcessMonitors,
+} from './observability/sentry';
 import { logger } from './utils';
+
+initSentry();
+installSentryProcessMonitors();
 
 async function main(): Promise<void> {
   try {
@@ -80,6 +88,7 @@ async function main(): Promise<void> {
     logger.error('Failed to start server', {
       error: error instanceof Error ? error.message : String(error),
     });
+    await captureAndFlushException(error, { source: 'server_startup' });
     await prisma.$disconnect();
     process.exit(1);
   }

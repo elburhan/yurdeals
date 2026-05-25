@@ -103,6 +103,9 @@ Paystack:
 
 - Confirm callback URL.
 - Confirm webhook URL.
+- Run `npm run paystack:readiness:check -w apps/backend -- --live`.
+- Confirm live secret/public key modes match in Render.
+- Confirm webhook signature verification is not bypassed.
 
 Resend:
 
@@ -159,6 +162,9 @@ Actions:
 - Complete Paystack live payment.
 - Return to frontend.
 - Confirm webhook/callback processing.
+- Confirm Paystack dashboard shows webhook delivery.
+- Confirm admin payment timeline shows one successful payment transition.
+- Confirm duplicate webhook delivery would be idempotent by checking event IDs/timeline if Paystack retries.
 
 Expected:
 
@@ -170,7 +176,7 @@ Expected:
 
 Escalation:
 
-- If payment succeeds in Paystack but remains pending in YurDeals, inspect admin payment timeline and backend logs before retrying.
+- If payment succeeds in Paystack but remains pending in YurDeals, inspect admin payment timeline and backend logs, then run payment reconciliation before asking the customer to retry.
 
 ## 10. Post-Launch Observation Period
 

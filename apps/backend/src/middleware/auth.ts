@@ -9,20 +9,6 @@ import { prisma } from '../config';
 import { AppError } from './errorHandler';
 import { setAccessTokenCookie } from '../utils/authCookies';
 
-/** Extend Express Request with typed user */
-declare module 'express-serve-static-core' {
-  interface Request {
-    user?: {
-      id: string;
-      email: string;
-      firstName: string;
-      lastName: string;
-      role: UserRoleType;
-      isActive: boolean;
-    };
-  }
-}
-
 /** Prisma select for safe user fields (never includes passwordHash) */
 const SAFE_USER_SELECT = {
   id: true,

@@ -4,7 +4,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { validateBody, validateQuery } from '../middleware/validate';
-import { requireAuth, requireRole } from '../middleware/auth';
+import { issueCsrfToken, requireAuth, requireRole } from '../middleware';
 import { AppError } from '../middleware/errorHandler';
 import {
   loginIdentifierRateLimiter,
@@ -37,6 +37,16 @@ import { getLatestDevVerificationCode } from '../services/notification.service';
 const router = Router();
 
 // ---- Routes ----
+
+router.get('/csrf', (_req: Request, res: Response) => {
+  const token = issueCsrfToken(res);
+
+  res.status(200).json({
+    success: true,
+    data: { csrfToken: token },
+    message: 'CSRF token issued',
+  });
+});
 
 /**
  * POST /api/v1/auth/register

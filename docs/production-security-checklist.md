@@ -22,6 +22,7 @@ Backend:
 - `JWT_REFRESH_EXPIRES_IN_SECONDS`
 - `COOKIE_SECRET`
 - `COOKIE_SAME_SITE`
+- `CSRF_ENABLED`
 - `CORS_ORIGIN`
 - `FRONTEND_URL`
 - `RATE_LIMIT_WINDOW_MS`
@@ -50,6 +51,9 @@ Backend:
 - `EMAIL_ENABLED`
 - `EMAIL_FROM`
 - `EMAIL_REPLY_TO`
+- `SENTRY_DSN` (optional; required for production error monitoring)
+- `SENTRY_ENVIRONMENT`
+- `SENTRY_TRACES_SAMPLE_RATE`
 - `SEED_ADMIN_EMAIL` (optional; only needed for seed-time admin bootstrap)
 - `SEED_ADMIN_PASSWORD` (optional; only needed for seed-time admin bootstrap)
 
@@ -65,6 +69,7 @@ Frontend:
 - Rotate Flutterwave keys and webhook secret hash together if Flutterwave is enabled.
 - Rotate Cloudinary API credentials if they were ever shared in chat, screenshots, or committed history.
 - Rotate `RESEND_API_KEY` if it was stored outside the secret manager or exposed in logs.
+- Rotate or replace `SENTRY_DSN` if it was committed or exposed outside deployment configuration.
 - If any old `.env` contents were committed or pasted publicly, replace the secrets before launch instead of assuming deletion is enough.
 
 ## Payment Provider Notes
@@ -72,13 +77,38 @@ Frontend:
 - Use Paystack test keys only in non-production environments.
 - Use Paystack live keys only in production.
 - `PAYSTACK_CALLBACK_URL` should point to the backend `/payment-return` route, not directly to the frontend.
+- Paystack live webhook URL should be `https://api.yourdomain.com/api/v1/payments/paystack/webhook`.
+- Run `npm run paystack:readiness:check -w apps/backend -- --live` before switching production to live keys.
+- Confirm Paystack webhook signature verification remains enabled and raw request bodies are preserved before JSON parsing.
+- Never treat the frontend callback as proof of payment; backend verification, webhook, or reconciliation must confirm the payment.
 - After switching Paystack from test to live, run one real end-to-end payment verification in production-safe conditions.
+
+## CSRF Notes
+
+- Keep `CSRF_ENABLED=true` in production when browser auth uses HttpOnly cookies.
+- Confirm `GET /api/v1/auth/csrf` sets a readable `csrf_token` cookie.
+- Confirm unsafe browser requests send `X-CSRF-Token`.
+- Confirm CORS allows `X-CSRF-Token`.
+- Confirm unsafe requests without a valid token fail with `CSRF_INVALID`.
+- Confirm Paystack webhook routes remain exempt and still rely on provider signature verification.
 
 ## Email and Media Notes
 
 - Verify the sending domain in Resend before setting `EMAIL_ENABLED=true`.
 - Confirm `EMAIL_FROM` uses a verified domain and that replies route to a monitored inbox.
 - Keep Cloudinary credentials in the deployment secret store only; do not embed them in frontend code or docs.
+
+## Sentry Production Checklist
+
+- Create a backend Node.js project in Sentry.
+- Set `SENTRY_DSN` in Render only.
+- Set `SENTRY_ENVIRONMENT=production`.
+- Set `SENTRY_TRACES_SAMPLE_RATE=0.05`.
+- Confirm backend Express errors are captured in Sentry without changing API error responses.
+- Confirm payment reconciliation and reservation expiry script failures are captured in staging before launch.
+- Confirm captured events do not include passwords, OTPs, auth cookies, bearer tokens, payment card data, Paystack secret keys, or raw provider payloads.
+- Configure Sentry alerts for new issues, regressions, and high-frequency backend errors.
+- Do not add a public production test-error route.
 
 ## Resend Production Checklist
 
@@ -99,11 +129,17 @@ Frontend:
 
 ## Deployment Checks
 
+- Confirm automated database backups are enabled and retention is documented.
+- Confirm PITR is enabled, or document why the provider plan does not support it.
+- Take a manual database snapshot before production migrations.
+- Complete a restore-to-staging test before launch; never restore-test against production.
 - Use a pooled production `DATABASE_URL` when your Postgres provider offers one, for example `postgresql://USER:PASSWORD@HOST:PORT/DB?schema=public&connection_limit=5&sslmode=require`.
 - If your provider separates pooled runtime URLs from direct migration URLs, keep the pooled URL in app runtime config and use the direct URL only for migrations when the provider recommends that split.
+- Run `npm run db:migrate:status -w apps/backend` before and after production migration work.
 - Run database migrations with `npm run db:migrate:prod -w apps/backend`.
 - Configure `npm run payments:reconcile -w apps/backend` on a `5-10` minute schedule.
 - Configure `npm run reservations:expire -w apps/backend` on a `5-10` minute schedule.
+- Confirm Paystack live callback and webhook URLs are configured in the Paystack dashboard.
 - Create or update the first admin during seeding by setting `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`, then running `npm run db:seed -w apps/backend`.
 - Run `npm run build:shared`.
 - Run `npm run build:backend`.
@@ -129,6 +165,7 @@ Frontend:
 
 - Production must run with `NODE_ENV=production`.
 - Backend auth cookies are always HttpOnly.
+- Keep CSRF enabled for cookie-authenticated browser requests, especially when `COOKIE_SAME_SITE=none`.
 - Use `COOKIE_SAME_SITE=none` for a Render temporary backend domain plus Vercel frontend domain; this sends `SameSite=None; Secure` cookies in production.
 - Use `COOKIE_SAME_SITE=lax` for a same-site custom-domain setup such as `https://yurdeals.com` plus `https://api.yurdeals.com`, after confirming browser cookie behavior.
 - `CORS_ORIGIN` must include the exact Vercel frontend origin, and the frontend API client must send credentials.
@@ -138,12 +175,15 @@ Frontend:
 ## Final Launch Sanity Checks
 
 - Confirm browser auth works with HttpOnly cookies and no access token persistence in `localStorage`.
+- Confirm CSRF token fetch, unsafe request header injection, and one-time retry work in the production browser flow.
 - Confirm `/payment-return` redirects to the exact `FRONTEND_URL`.
 - Confirm no debug or dev-only auth inspection routes are reachable in production.
 - Confirm CORS allows only approved frontend origins.
 - Confirm production `.env` values are present in the deployment platform and absent from the repository.
+- Confirm database backups are encrypted, access-controlled, and periodically restore-tested.
 - Confirm anonymous guest checkout always creates an isolated guest-owned order/address record, even when the submitted guest email or phone matches an existing registered account.
 - Confirm guest order-created and payment-confirmed emails use the guest-submitted contact details without attaching the order to a registered account.
+- Confirm Paystack live readiness check passes and one controlled low-value live payment updates order/payment/reservation state correctly.
 - Confirm public order tracking requires both the checkout phone number and the exact order number.
 - Confirm public tracking is rate-limited and returns only sanitized tracking details, never full shipping addresses, full item details, totals, or payment references.
 - Confirm both the payment reconciliation and reservation expiry schedulers are active in production.

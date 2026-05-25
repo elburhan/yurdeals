@@ -79,12 +79,15 @@ After verifying admin login, rotate or remove the one-time seed password from th
 - Keep at least 7 days of retention before launch; increase after traffic grows.
 - Take a manual snapshot before first launch and before major schema migrations.
 - Test restore in a non-production database before trusting the backup process.
+- Follow the full disaster recovery guide in `docs/deployment/database-backup-recovery.md`.
 
 ## Production Migration Checklist
 
 - Confirm `DATABASE_URL` points to production.
 - Confirm a backup exists.
+- Run `npm run db:migrate:status -w apps/backend`.
 - Run `npm run db:migrate:prod -w apps/backend`.
+- Re-run `npm run db:migrate:status -w apps/backend`.
 - Run `npm run db:generate -w apps/backend` if the generated client is not already built in the deployment image.
 - Run `npm run db:seed -w apps/backend`.
 - Verify `/api/v1/health`.

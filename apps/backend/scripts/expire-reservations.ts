@@ -2,6 +2,9 @@ import { InventoryReservationStatus, PaymentStatus, PaymentProvider } from '@pri
 import { prisma } from '../src/config';
 import { expireOrderInventoryReservations } from '../src/services/inventoryReservation.service';
 import { logger } from '../src/utils';
+import { captureAndFlushException, initSentry } from '../src/observability/sentry';
+
+initSentry();
 
 interface ExpireReservationsResult {
   runId: string;
@@ -85,7 +88,8 @@ async function main(): Promise<void> {
 }
 
 main()
-  .catch((error: unknown) => {
+  .catch(async (error: unknown) => {
+    await captureAndFlushException(error, { source: 'reservations_expire_script' });
     logger.error('Reservation expiry script failed', {
       error: error instanceof Error ? error.message : 'Unknown error',
     });

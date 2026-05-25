@@ -1,6 +1,9 @@
 import { reconcilePendingPaystackPayments } from '../src/services/paymentReconciliation.service';
 import { logger } from '../src/utils';
 import { prisma } from '../src/config';
+import { captureAndFlushException, initSentry } from '../src/observability/sentry';
+
+initSentry();
 
 async function main(): Promise<void> {
   const result = await reconcilePendingPaystackPayments();
@@ -18,7 +21,8 @@ async function main(): Promise<void> {
 }
 
 main()
-  .catch((error: unknown) => {
+  .catch(async (error: unknown) => {
+    await captureAndFlushException(error, { source: 'payments_reconcile_script' });
     logger.error('Payment reconciliation script failed', {
       error: error instanceof Error ? error.message : 'Unknown error',
     });

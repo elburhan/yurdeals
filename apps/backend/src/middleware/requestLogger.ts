@@ -8,12 +8,6 @@ import { logger } from '../utils';
 
 const CORRELATION_ID_HEADER = 'X-Request-ID';
 
-declare module 'express-serve-static-core' {
-  interface Request {
-    correlationId?: string;
-  }
-}
-
 export function requestLogger(req: Request, res: Response, next: NextFunction): void {
   const correlationId = getOrCreateCorrelationId(req);
   const startedAt = process.hrtime.bigint();

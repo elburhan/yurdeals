@@ -12,11 +12,19 @@ Generate strong values for:
 
 Why: the backend cannot safely run production auth without stable, private signing secrets.
 
-## 2. Provision PostgreSQL
+## 2. Provision PostgreSQL and Backups
 
-Create the production Postgres database and capture `DATABASE_URL`.
+Create the production Postgres database, capture `DATABASE_URL`, and enable automated backups before running migrations.
 
-Why: migrations and backend startup depend on the database.
+Minimum launch requirements:
+
+- automated backups enabled,
+- retention documented,
+- PITR enabled when supported by the provider plan,
+- one manual pre-migration snapshot,
+- one restore-to-staging test completed.
+
+Why: migrations and backend startup depend on the database, and orders/payments/inventory data need a tested recovery path before customer traffic.
 
 ## 3. Configure Backend Environment
 
@@ -35,11 +43,13 @@ Why: Paystack, Vercel, Resend testing, and admin operations all require a reacha
 Run:
 
 ```bash
+npm run db:migrate:status -w apps/backend
 npm run db:migrate:prod -w apps/backend
+npm run db:migrate:status -w apps/backend
 npm run db:generate -w apps/backend
 ```
 
-Why: the schema must be ready before seeding or accepting traffic.
+Why: the schema must be ready before seeding or accepting traffic, and migration status should be known before and after deployment.
 
 ## 6. Seed Admin
 
@@ -97,7 +107,18 @@ Run operational smoke tests:
 
 Why: this catches cross-system mistakes before real users hit them.
 
-## 12. Soft Launch
+## 12. Confirm Recovery Readiness
+
+Confirm:
+
+- latest automated backup is visible in the provider dashboard,
+- restore-to-staging procedure in `docs/deployment/database-backup-recovery.md` has been tested,
+- readonly order/payment/inventory verification queries are ready,
+- payment reconciliation and reservation expiry cron behavior is understood during restore incidents.
+
+Why: launch should not depend on an untested backup.
+
+## 13. Soft Launch
 
 Open to a small group first and monitor:
 
